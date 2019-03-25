@@ -471,6 +471,7 @@ def Backtest(ohlcv,
     buy_size=1.0, sell_size=1.0, max_buy_size=1.0, max_sell_size=1.0,
     spread=0, take_profit=0, stop_loss=0, trailing_stop=0, slippage=0, percent_of_equity=0.0, initial_capital=0.0,
     trades_per_second = 0, delay_n = 0, order_restrict_n = 0, max_drawdown=0, wait_seconds_for_mdd=0, yourlogic=None,
+    bitflyer_rounding = True,
     **kwargs):
     Open = ohlcv.open.values #始値
     Low = ohlcv.low.values #安値
@@ -565,6 +566,10 @@ def Backtest(ohlcv,
             int(trades_per_n), int(delay_n+1), int(order_restrict_n), float(max_drawdown), int(wait_n_for_mdd),
             LongTrade, LongPL, LongPct, ShortTrade, ShortPL, ShortPct, PositionSize)
 
+    if bitflyer_rounding:
+        LongPL = LongPL.round()
+        ShortPL = ShortPL.round()
+
     return BacktestReport(pd.DataFrame({
         'LongTrade':LongTrade, 'ShortTrade':ShortTrade,
         'LongPL':LongPL, 'ShortPL':ShortPL,
@@ -582,7 +587,7 @@ class BacktestReport:
         self.Long = dotdict()
         self.Long.PL = LongPL
         self.Long.Pct = DataFrame['LongPct']
-        self.Long.Trades = np.count_nonzero(LongPL)
+        self.Long.Trades = np.count_nonzero(DataFrame['LongTrade'])
         if self.Long.Trades > 0:
             self.Long.GrossProfit = LongPL.clip_lower(0).sum()
             self.Long.GrossLoss =  LongPL.clip_upper(0).sum()
@@ -598,12 +603,10 @@ class BacktestReport:
             self.Long.WinMax = LongPL.max()
             self.Long.WinAverage = self.Long.GrossProfit / self.Long.WinTrades
             self.Long.WinPct = self.Long.Pct[self.Long.Pct > 0].mean()
-            self.Long.WinRatio = self.Long.WinTrades / self.Long.Trades
         else:
             self.Long.WinMax = 0.0
             self.Long.WinAverage = 0.0
             self.Long.WinPct = 0.0
-            self.Long.WinRatio = 0.0
         self.Long.LossTrades = np.count_nonzero(LongPL.clip_upper(0))
         if self.Long.LossTrades > 0:
             self.Long.LossMax = LongPL.min()
@@ -613,13 +616,16 @@ class BacktestReport:
             self.Long.LossMax = 0.0
             self.Long.LossAverage = 0.0
             self.Long.LossPct = 0.0
+        trades = self.Long.WinTrades+self.Long.LossTrades
+        self.Long.WinRatio = self.Long.WinTrades / trades if trades else 0
+        self.Long.EvenTrades = self.Long.Trades - trades
 
         # ショート統計
         ShortPL = DataFrame['ShortPL']
         self.Short = dotdict()
         self.Short.PL = ShortPL
         self.Short.Pct = DataFrame['ShortPct']
-        self.Short.Trades = np.count_nonzero(ShortPL)
+        self.Short.Trades = np.count_nonzero(DataFrame['ShortTrade'])
         if self.Short.Trades > 0:
             self.Short.GrossProfit = ShortPL.clip_lower(0).sum()
             self.Short.GrossLoss = ShortPL.clip_upper(0).sum()
@@ -635,12 +641,10 @@ class BacktestReport:
             self.Short.WinMax = ShortPL.max()
             self.Short.WinAverage = self.Short.GrossProfit / self.Short.WinTrades
             self.Short.WinPct = self.Short.Pct[self.Short.Pct > 0].mean()
-            self.Short.WinRatio = self.Short.WinTrades / self.Short.Trades
         else:
             self.Short.WinMax = 0.0
             self.Short.WinAverage = 0.0
             self.Short.WinPct = 0.0
-            self.Short.WinRatio = 0.0
         self.Short.LossTrades = np.count_nonzero(ShortPL.clip_upper(0))
         if self.Short.LossTrades > 0:
             self.Short.LossMax = ShortPL.min()
@@ -650,6 +654,9 @@ class BacktestReport:
             self.Short.LossMax = 0.0
             self.Short.LossTrades = 0.0
             self.Short.LossPct = 0.0
+        trades = self.Short.WinTrades+self.Short.LossTrades
+        self.Short.WinRatio = self.Short.WinTrades / trades if trades else 0
+        self.Short.EvenTrades = self.Short.Trades - trades
 
         # 資産
         self.Equity = (LongPL + ShortPL).cumsum()
@@ -658,9 +665,11 @@ class BacktestReport:
         self.All = dotdict()
         self.All.Trades = self.Long.Trades + self.Short.Trades
         self.All.WinTrades = self.Long.WinTrades + self.Short.WinTrades
-        self.All.WinPct = (self.Long.WinPct + self.Short.WinPct) / 2
-        self.All.WinRatio = self.All.WinTrades / self.All.Trades if self.All.Trades > 0 else 0.0
         self.All.LossTrades = self.Long.LossTrades + self.Short.LossTrades
+        trades = self.All.WinTrades+self.All.LossTrades
+        self.All.EvenTrades = self.All.Trades - trades
+        self.All.WinPct = (self.Long.WinPct + self.Short.WinPct) / 2
+        self.All.WinRatio = self.All.WinTrades / trades if trades > 0 else 0
         self.All.GrossProfit = self.Long.GrossProfit + self.Short.GrossProfit
         self.All.GrossLoss = self.Long.GrossLoss + self.Short.GrossLoss
         self.All.WinAverage = self.All.GrossProfit / self.All.WinTrades if self.All.WinTrades > 0 else 0
@@ -684,6 +693,7 @@ class BacktestReport:
     def __str__(self):
         return 'Long\n' \
         '  Trades :' + str(self.Long.Trades) + '\n' \
+        '  EvenTrades :' + str(self.Long.EvenTrades) + '\n' \
         '  WinTrades :' + str(self.Long.WinTrades) + '\n' \
         '  WinMax :' + str(self.Long.WinMax) + '\n' \
         '  WinAverage :' + str(self.Long.WinAverage) + '\n' \
@@ -699,6 +709,7 @@ class BacktestReport:
         '  AvgReturn :' + str(self.Long.AvgReturn) + '\n' \
         '\nShort\n' \
         '  Trades :' + str(self.Short.Trades) + '\n' \
+        '  EvenTrades :' + str(self.Short.EvenTrades) + '\n' \
         '  WinTrades :' + str(self.Short.WinTrades) + '\n' \
         '  WinMax :' + str(self.Short.WinMax) + '\n' \
         '  WinAverage :' + str(self.Short.WinAverage) + '\n' \
@@ -714,6 +725,7 @@ class BacktestReport:
         '  AvgReturn :' + str(self.Short.AvgReturn) + '\n' \
         '\nAll\n' \
         '  Trades :' + str(self.All.Trades) + '\n' \
+        '  EvenTrades :' + str(self.All.EvenTrades) + '\n' \
         '  WinTrades :' + str(self.All.WinTrades) + '\n' \
         '  WinAverage :' + str(self.All.WinAverage) + '\n' \
         '  WinPct :' + str(self.All.WinPct) + '\n' \
