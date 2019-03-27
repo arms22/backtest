@@ -343,15 +343,15 @@ def BacktestCore2(Open, High, Low, Close, Volume, Delay, N, YourLogic,
 
     class Strategy:
         def __init__(self):
-            self.positions = None
+            self.positions = []
             self.position_size = 0
             self.position_avg_price = 0
             self.netprofit = 0
-            self.open_orders = None
+            self.open_orders = {}
             self.orders = {}
 
-        def order(self, myid, side, qty, limit = 0):
-            self.orders[myid] = (-1 if side=='sell' else +1, limit, qty, myid)
+        def order(self, myid, side, qty, limit=0, expire_at=N+1):
+            self.orders[myid] = (+1 if side=='buy' else -1, limit, qty, myid, expire_at)
 
         def cancel(self, myid):
             self.orders[myid] = (0, 0, 0, myid)
@@ -359,10 +359,16 @@ def BacktestCore2(Open, High, Low, Close, Volume, Delay, N, YourLogic,
     positions = deque()
     position_size = 0
     position_avg_price = 0
-    netprofit = np.zeros(N)
+    netprofit = 0
     open_orders = {}
     new_orders = []
     strategy = Strategy()
+    previous = deque([{
+        'positions':[],
+        'position_size':0,
+        'position_avg_price':0,
+        'netprofit':0,
+        'open_orders':{}}]*max_delay_n,maxlen=max_delay_n)
 
     for n in range(max_delay_n, N):
 
@@ -375,19 +381,19 @@ def BacktestCore2(Open, High, Low, Close, Volume, Delay, N, YourLogic,
         new_orders = []
 
         # サイズ0の注文はキャンセル
-        open_orders = {k:v for k,v in open_orders.items() if v[2]>0}
+        open_orders = {k:v for k,v in open_orders.items() if v[2]>0 and n<v[4]}
 
         # 約定判定（成行と指値のみ対応/現在の足で約定）
-        executions = [o for o in open_orders.values() if (o[1]==0) or (o[1]>0 and ((o[0]<0 and H>o[1]) or (o[0]>0 and L<o[1])))]
-
-        # 約定した注文を削除
-        for e in executions:
-            del open_orders[e[3]]
+        executions = [o for o in open_orders.values()\
+                        if (o[1]==0) or (o[1]>0 and ((o[0]<0 and H>o[1]) or (o[0]>0 and L<o[1])))]
 
         # 約定処理
         for e in executions:
-            o_side, exec_price, o_size, o_id = e
+            o_side, exec_price, o_size, o_id, _ = e
             exec_price = exec_price if exec_price>0 else O
+
+            # 約定した注文を削除
+            del open_orders[e[3]]
 
             # 注文情報保存
             if o_side > 0:
@@ -418,11 +424,9 @@ def BacktestCore2(Open, High, Low, Close, Volume, Delay, N, YourLogic,
                         # print(n, 'Close', l_side, l_price, l_size, r_price, pnl)
                     # 決済情報保存
                     if l_side > 0:
-                        LongPL[n] = LongPL[n] + pnl
-                        LongPct[n] = LongPL[n] / r_price
+                        LongPL[n], LongPct[n] = LongPL[n]+pnl, LongPL[n]/r_price
                     else:
-                        ShortPL[n] = ShortPL[n] + pnl
-                        ShortPct[n] = ShortPL[n] / r_price
+                        ShortPL[n], ShortPct[n] = ShortPL[n]+pnl, ShortPL[n]/r_price
                 else:
                     break
 
@@ -439,12 +443,15 @@ def BacktestCore2(Open, High, Low, Close, Volume, Delay, N, YourLogic,
         PositionSize[n] = position_size
 
         # 合計損益
-        netprofit[n] = netprofit[n-1] + LongPL[n] + ShortPL[n]
+        netprofit = netprofit + LongPL[n] + ShortPL[n]
+
+        # 遅延用情報保存
+        previous.append({'positions':list(positions),'position_size':position_size,'position_avg_price':position_avg_price,'netprofit':netprofit,'open_orders':open_orders.copy()})
 
         # 注文作成
-        prev_n = n-Delay[n]
+        prev_n, delayed = n-Delay[n], previous[-1-Delay[n]]
         strategy.positions, strategy.position_size, strategy.position_avg_price, strategy.netprofit, strategy.open_orders, strategy.orders = \
-            positions, PositionSize[prev_n], position_avg_price, netprofit[prev_n], open_orders, {}
+            delayed['positions'], delayed['position_size'], delayed['position_avg_price'], delayed['netprofit'], delayed['open_orders'], {}
         YourLogic(Open[prev_n], High[prev_n], Low[prev_n], Close[prev_n], prev_n, strategy)
         new_orders.append(strategy.orders)
 
