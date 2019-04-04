@@ -337,9 +337,8 @@ def BacktestCore(Open, High, Low, Close, Volume, Trades, N,
         ShortPL[N-1] = (sellExecPrice - ClosePrice) * sellExecLot #損益確定
         ShortPct[N-1] = ShortPL[N-1] / sellExecPrice
 
-def BacktestCore2(Open, High, Low, Close, Volume, Delay, N, YourLogic,
-                  LongTrade, LongPL, LongPct, ShortTrade, ShortPL, ShortPct, PositionSize,
-                  max_delay_n):
+def BacktestCore2(Open, High, Low, Close, Volume, Timestamp, Delay, N, YourLogic,
+                  LongTrade, LongPL, LongPct, ShortTrade, ShortPL, ShortPct, PositionSize):
 
     class Strategy:
         def __init__(self):
@@ -348,39 +347,59 @@ def BacktestCore2(Open, High, Low, Close, Volume, Delay, N, YourLogic,
             self.position_avg_price = 0
             self.netprofit = 0
             self.open_orders = {}
+            self.accept_orders = {}
             self.orders = {}
 
         def order(self, myid, side, qty, limit=0, expire_at=N+1):
-            self.orders[myid] = (+1 if side=='buy' else -1, limit, qty, myid, expire_at)
+            if (myid not in self.accept_orders):
+                self.orders[myid] = (+1 if side=='buy' else -1, limit, qty, myid, expire_at)
 
         def cancel(self, myid):
             self.orders[myid] = (0, 0, 0, myid)
+
+        def cancel_order_all(self):
+            for o in self.open_orders.values():
+                self.orders[o[3]] = (0, 0, 0, o[3])
+
+        def close_position(self):
+            if self.position_size>0:
+                if '__Lc__' not in self.accept_orders:
+                    self.orders['__Lc__'] = (-1, 0, self.position_size, '__Lc__', N+1)
+            elif self.position_size<0:
+                if '__Sc__' not in self.accept_orders:
+                    self.orders['__Sc__'] = (1, 0, -self.position_size, '__Sc__', N+1)
 
     positions = deque()
     position_size = 0
     position_avg_price = 0
     netprofit = 0
     open_orders = {}
-    new_orders = []
+    accept_orders = []
     strategy = Strategy()
-    previous = deque([{
+    max_delay = int(np.max(Delay)+1)
+    stack = deque([{
         'positions':[],
         'position_size':0,
         'position_avg_price':0,
         'netprofit':0,
-        'open_orders':{}}]*max_delay_n,maxlen=max_delay_n)
+        'open_orders':{}}]*max_delay,maxlen=max_delay)
 
-    for n in range(max_delay_n, N):
+    for n in range(max_delay, N):
 
         # OHLCV取得
-        O, H, L, C, V = Open[n], High[n], Low[n], Close[n], Volume[n]
+        O, H, L, C, V, T, d = Open[n], High[n], Low[n], Close[n], Volume[n], Timestamp[n], Delay[n]
 
         # 新規注文受付
-        for o in new_orders:
-            open_orders.update(o)
-        new_orders = []
+        remaining, remaining_orders, exec_t = [], {}, T-d
+        for accept_t, o in accept_orders:
+            if exec_t>accept_t:
+                open_orders.update(o)
+            else:
+                remaining.append((accept_t,o))
+                remaining_orders.update(o)
+        accept_orders = remaining
 
-        # サイズ0の注文はキャンセル
+        # サイズ0の注文・期限切れの注文キャンセル
         open_orders = {k:v for k,v in open_orders.items() if v[2]>0 and n<v[4]}
 
         # 約定判定（成行と指値のみ対応/現在の足で約定）
@@ -424,9 +443,11 @@ def BacktestCore2(Open, High, Low, Close, Volume, Delay, N, YourLogic,
                         # print(n, 'Close', l_side, l_price, l_size, r_price, pnl)
                     # 決済情報保存
                     if l_side > 0:
-                        LongPL[n], LongPct[n] = LongPL[n]+pnl, LongPL[n]/r_price
+                        LongPL[n] = LongPL[n]+pnl
+                        LongPct[n] = LongPL[n]/r_price
                     else:
-                        ShortPL[n], ShortPct[n] = ShortPL[n]+pnl, ShortPL[n]/r_price
+                        ShortPL[n] = ShortPL[n]+pnl
+                        ShortPct[n] = ShortPL[n]/r_price
                 else:
                     break
 
@@ -446,14 +467,15 @@ def BacktestCore2(Open, High, Low, Close, Volume, Delay, N, YourLogic,
         netprofit = netprofit + LongPL[n] + ShortPL[n]
 
         # 遅延用情報保存
-        previous.append({'positions':list(positions),'position_size':position_size,'position_avg_price':position_avg_price,'netprofit':netprofit,'open_orders':open_orders.copy()})
+        stack.append({'positions':list(positions),'position_size':position_size,'position_avg_price':position_avg_price,'netprofit':netprofit,'open_orders':open_orders.copy()})
 
         # 注文作成
-        prev_n, delayed = n-Delay[n], previous[-1-Delay[n]]
-        strategy.positions, strategy.position_size, strategy.position_avg_price, strategy.netprofit, strategy.open_orders, strategy.orders = \
-            delayed['positions'], delayed['position_size'], delayed['position_avg_price'], delayed['netprofit'], delayed['open_orders'], {}
-        YourLogic(Open[prev_n], High[prev_n], Low[prev_n], Close[prev_n], prev_n, strategy)
-        new_orders.append(strategy.orders)
+        delayed = stack[-1-d]
+        strategy.positions, strategy.position_size, strategy.position_avg_price, strategy.netprofit, strategy.open_orders, strategy.accept_orders, strategy.orders = \
+            delayed['positions'], delayed['position_size'], delayed['position_avg_price'], delayed['netprofit'], delayed['open_orders'], remaining_orders, {}
+        YourLogic(O, H, L, C, n, strategy)
+        if len(strategy.orders):
+            accept_orders.append((T,strategy.orders))
 
     # 残ポジションクローズ
     if len(positions):
@@ -478,7 +500,7 @@ def Backtest(ohlcv,
     buy_size=1.0, sell_size=1.0, max_buy_size=1.0, max_sell_size=1.0,
     spread=0, take_profit=0, stop_loss=0, trailing_stop=0, slippage=0, percent_of_equity=0.0, initial_capital=0.0,
     trades_per_second = 0, delay_n = 0, order_restrict_n = 0, max_drawdown=0, wait_seconds_for_mdd=0, yourlogic=None,
-    bitflyer_rounding = True,
+    bitflyer_rounding = False,
     **kwargs):
     Open = ohlcv.open.values #始値
     Low = ohlcv.low.values #安値
@@ -533,25 +555,27 @@ def Backtest(ohlcv,
     limit_buy_exit = place_holder if limit_buy_exit is None else limit_buy_exit.values
     limit_sell_exit = place_holder if limit_sell_exit is None else limit_sell_exit.values
 
-    timerange = (ohlcv.index[1] - ohlcv.index[0]).total_seconds()
+    # タイムフレーム
+    timeframe = (ohlcv.index[1] - ohlcv.index[0]).total_seconds()
 
     # 約定数
     if 'trades' in ohlcv:
         Trades = ohlcv.trades.values
     else:
         Trades = place_holder
-    trades_per_n = trades_per_second * timerange
+    trades_per_n = trades_per_second * timeframe
 
-    # 配信遅延
+    # 基準時刻
+    Timestamp = ohlcv.index.astype(np.int64) / timeframe // 10**9
+
+    # 遅延情報
     if 'delay' in ohlcv:
-        Delay = ((ohlcv.delay+timerange/2)//timerange).values
-        max_delay_n = np.max(Delay)
+        Delay = ((ohlcv.delay+timeframe/2)//timeframe).clip_lower(0).values
     else:
         Delay = np.full(shape=(N), fill_value=int(delay_n))
-        max_delay_n = delay_n
 
     # ドローダウン時の待ち時間
-    wait_n_for_mdd = math.ceil(wait_seconds_for_mdd / timerange)
+    wait_n_for_mdd = math.ceil(wait_seconds_for_mdd / timeframe)
 
     if yourlogic:
         # import line_profiler
@@ -559,8 +583,8 @@ def Backtest(ohlcv,
         # lp.add_function(BacktestCore2)
         # lp.add_function(yourlogic)
         # lp.enable()
-        BacktestCore2(Open.astype(float), High.astype(float), Low.astype(float), Close.astype(float), Volume.astype(float), Delay.astype(int), N, yourlogic,
-        LongTrade, LongPL, LongPct, ShortTrade, ShortPL, ShortPct, PositionSize, int(max_delay_n+1))
+        BacktestCore2(Open.astype(float), High.astype(float), Low.astype(float), Close.astype(float), Volume.astype(float), Timestamp.astype(int), Delay.astype(int), N, yourlogic,
+            LongTrade, LongPL, LongPct, ShortTrade, ShortPL, ShortPct, PositionSize)
         # lp.disable()
         # lp.print_stats()
     else:
@@ -594,7 +618,7 @@ class BacktestReport:
         self.Long = dotdict()
         self.Long.PL = LongPL
         self.Long.Pct = DataFrame['LongPct']
-        self.Long.Trades = np.count_nonzero(DataFrame['LongTrade'])
+        self.Long.Trades = np.count_nonzero(LongPL)
         if self.Long.Trades > 0:
             self.Long.GrossProfit = LongPL.clip_lower(0).sum()
             self.Long.GrossLoss =  LongPL.clip_upper(0).sum()
@@ -632,7 +656,7 @@ class BacktestReport:
         self.Short = dotdict()
         self.Short.PL = ShortPL
         self.Short.Pct = DataFrame['ShortPct']
-        self.Short.Trades = np.count_nonzero(DataFrame['ShortTrade'])
+        self.Short.Trades = np.count_nonzero(ShortPL)
         if self.Short.Trades > 0:
             self.Short.GrossProfit = ShortPL.clip_lower(0).sum()
             self.Short.GrossLoss = ShortPL.clip_upper(0).sum()
