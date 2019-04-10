@@ -376,43 +376,41 @@ def BacktestCore2(Open, High, Low, Close, Volume, Timestamp, Delay, N, YourLogic
     open_orders = {}
     accept_orders = []
     strategy = Strategy()
-    max_delay = int(np.max(Delay)+1)
-    stack = deque([{
-        'positions':[],
-        'position_size':0,
-        'position_avg_price':0,
-        'netprofit':0,
-        'open_orders':{}}]*max_delay,maxlen=max_delay)
 
-    for n in range(max_delay, N):
+    for n in range(1, N):
 
         # OHLCV取得
-        O, H, L, C, V, T, d = Open[n], High[n], Low[n], Close[n], Volume[n], Timestamp[n], Delay[n]
+        O, H, L, C, V, T = Open[n], High[n], Low[n], Close[n], Volume[n], Timestamp[n]
 
         # 新規注文受付
-        remaining, remaining_orders, exec_t = [], {}, T-d
+        executions, remaining, remaining_orders, exec_t = [], [], {}, T-Delay[n]
         for accept_t, o in accept_orders:
             if exec_t>accept_t:
                 open_orders.update(o)
             else:
                 remaining.append((accept_t,o))
                 remaining_orders.update(o)
+
+            # サイズ0の注文・期限切れの注文キャンセル
+            open_orders = {k:v for k,v in open_orders.items() if v[2]>0 and n<v[4]}
+
+            # 約定判定（成行と指値のみ対応/現在の足で約定）
+            es = [o for o in open_orders.values() if (o[1]==0) or (o[1]>0 and ((o[0]<0 and H>o[1]) or (o[0]>0 and L<o[1])))]
+
+            #  約定履歴更新
+            executions.extend(es)
+
+            # 約定した注文を削除
+            for e in es:
+                del open_orders[e[3]]
+
+        # 残った注文は次の足で処理
         accept_orders = remaining
-
-        # サイズ0の注文・期限切れの注文キャンセル
-        open_orders = {k:v for k,v in open_orders.items() if v[2]>0 and n<v[4]}
-
-        # 約定判定（成行と指値のみ対応/現在の足で約定）
-        executions = [o for o in open_orders.values()\
-                        if (o[1]==0) or (o[1]>0 and ((o[0]<0 and H>o[1]) or (o[0]>0 and L<o[1])))]
 
         # 約定処理
         for e in executions:
             o_side, exec_price, o_size, o_id, _ = e
             exec_price = exec_price if exec_price>0 else O
-
-            # 約定した注文を削除
-            del open_orders[e[3]]
 
             # 注文情報保存
             if o_side > 0:
@@ -466,16 +464,11 @@ def BacktestCore2(Open, High, Low, Close, Volume, Timestamp, Delay, N, YourLogic
         # 合計損益
         netprofit = netprofit + LongPL[n] + ShortPL[n]
 
-        # 遅延用情報保存
-        stack.append({'positions':list(positions),'position_size':position_size,'position_avg_price':position_avg_price,'netprofit':netprofit,'open_orders':open_orders.copy()})
-
         # 注文作成
-        delayed = stack[-1-d]
         strategy.positions, strategy.position_size, strategy.position_avg_price, strategy.netprofit, strategy.open_orders, strategy.accept_orders, strategy.orders = \
-            delayed['positions'], delayed['position_size'], delayed['position_avg_price'], delayed['netprofit'], delayed['open_orders'], remaining_orders, {}
+            list(positions), position_size, position_avg_price, netprofit, open_orders, remaining_orders, {}
         YourLogic(O, H, L, C, n, strategy)
-        if len(strategy.orders):
-            accept_orders.append((T,strategy.orders))
+        accept_orders.append((T,strategy.orders))
 
     # 残ポジションクローズ
     if len(positions):
