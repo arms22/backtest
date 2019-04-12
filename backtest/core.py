@@ -10,72 +10,6 @@ from collections import deque
 # PythonでFXシストレのバックテスト(1)
 # https://qiita.com/toyolab/items/e8292d2f051a88517cb2 より
 
-@jit(f8(f8,f8,f8,f8,f8,f8,f8),nopython=True)
-def buy_order(market, limit, stop, O, H, L, C):
-    exec_price = 0
-    # STOP注文
-    if stop > 0 and H >= stop:
-        if stop >= O:
-            exec_price = stop
-        else:
-            exec_price = O
-    # 指値注文
-    elif limit > 0 and L <= limit:
-        exec_price = limit
-    # 成行注文
-    elif market:
-        exec_price = O
-    # 注文執行
-    return exec_price
-
-@jit(f8(f8,f8,f8,f8,f8,f8,f8),nopython=True)
-def buy_close(profit, stop, exec_price, O, H, L, C):
-    close_price = 0
-    if stop > 0:
-        # 損切判定
-        stop_price = exec_price - stop
-        if L <= stop_price:
-            close_price = stop_price
-    if profit > 0:
-        # 利確判定
-        profit_price = exec_price + profit
-        if H >= profit_price:
-            close_price = profit_price
-    return close_price
-
-@jit(f8(f8,f8,f8,f8,f8,f8,f8),nopython=True)
-def sell_order(market, limit, stop, O, H, L, C):
-    exec_price = 0
-    # STOP注文
-    if stop > 0 and L <= stop:
-        if stop <= O:
-            exec_price = stop
-        else:
-            exec_price = O
-    # 指値注文
-    elif limit > 0 and H >= limit:
-        exec_price = limit
-    # 成行注文
-    elif market:
-        exec_price = O
-    # 注文執行
-    return exec_price
-
-@jit(f8(f8,f8,f8,f8,f8,f8,f8),nopython=True)
-def sell_close(profit, stop, exec_price, O, H, L, C):
-    close_price = 0
-    if stop > 0:
-        # 損切判定
-        stop_price = exec_price + stop
-        if H >= stop_price:
-            close_price = stop_price
-    if profit > 0:
-        # 利確判定
-        profit_price = exec_price - profit
-        if L <= profit_price:
-            close_price = profit_price
-    return close_price
-
 @jit(f8(f8,f8,f8,f8),nopython=True)
 def calclots(capital, price, percent, lot):
     if percent > 0:
@@ -338,7 +272,7 @@ def BacktestCore(Open, High, Low, Close, Volume, Trades, N,
         ShortPct[N-1] = ShortPL[N-1] / sellExecPrice
 
 def BacktestCore2(Open, High, Low, Close, Volume, Timestamp, Delay, N, YourLogic,
-                  LongTrade, LongPL, LongPct, ShortTrade, ShortPL, ShortPct, PositionSize):
+                  LongTrade, LongPL, LongPct, ShortTrade, ShortPL, ShortPct, PositionSize, NumberOfRequests, NumberOfOrders):
 
     class Strategy:
         def __init__(self):
@@ -349,24 +283,35 @@ def BacktestCore2(Open, High, Low, Close, Volume, Timestamp, Delay, N, YourLogic
             self.open_orders = {}
             self.accept_orders = {}
             self.orders = {}
+            self.number_of_requests = 0
+            self.number_of_orders = 0
 
         def order(self, myid, side, qty, limit=0, expire_at=N+1):
             if (myid not in self.accept_orders):
+                # オープン注文がある場合、キャンセル分足す
+                self.number_of_requests += 2 if myid in self.open_orders else 1
+                self.number_of_orders += 1
                 self.orders[myid] = (+1 if side=='buy' else -1, limit, qty, myid, expire_at)
 
         def cancel(self, myid):
+            self.number_of_requests += 1
             self.orders[myid] = (0, 0, 0, myid)
 
         def cancel_order_all(self):
             for o in self.open_orders.values():
+                self.number_of_requests += 1
                 self.orders[o[3]] = (0, 0, 0, o[3])
 
         def close_position(self):
             if self.position_size>0:
                 if '__Lc__' not in self.accept_orders:
+                    self.number_of_requests += 1
+                    self.number_of_orders += 1
                     self.orders['__Lc__'] = (-1, 0, self.position_size, '__Lc__', N+1)
             elif self.position_size<0:
                 if '__Sc__' not in self.accept_orders:
+                    self.number_of_requests += 1
+                    self.number_of_orders += 1
                     self.orders['__Sc__'] = (1, 0, -self.position_size, '__Sc__', N+1)
 
     positions = deque()
@@ -470,6 +415,10 @@ def BacktestCore2(Open, High, Low, Close, Volume, Timestamp, Delay, N, YourLogic
         YourLogic(O, H, L, C, n, strategy)
         accept_orders.append((T,strategy.orders))
 
+        # API発行回数・新規注文数保存
+        NumberOfRequests[n] = strategy.number_of_requests
+        NumberOfOrders[n] = strategy.number_of_orders
+
     # 残ポジションクローズ
     if len(positions):
         position_size = math.fsum(p[2]*p[0] for p in positions)
@@ -516,6 +465,8 @@ def Backtest(ohlcv,
     ShortPct = np.zeros(N) # 売りポジションの損益率
 
     PositionSize = np.zeros(N) # ポジション情報
+    NumberOfRequests = np.zeros(N)
+    NumberOfOrders = np.zeros(N)
 
     place_holder = np.zeros(N) # プレースホルダ
     bool_place_holder = np.zeros(N, dtype=np.bool) # プレースホルダ
@@ -577,7 +528,7 @@ def Backtest(ohlcv,
         # lp.add_function(yourlogic)
         # lp.enable()
         BacktestCore2(Open.astype(float), High.astype(float), Low.astype(float), Close.astype(float), Volume.astype(float), Timestamp.astype(int), Delay.astype(int), N, yourlogic,
-            LongTrade, LongPL, LongPct, ShortTrade, ShortPL, ShortPct, PositionSize)
+            LongTrade, LongPL, LongPct, ShortTrade, ShortPL, ShortPct, PositionSize, NumberOfRequests, NumberOfOrders)
         # lp.disable()
         # lp.print_stats()
     else:
@@ -599,12 +550,22 @@ def Backtest(ohlcv,
         'LongPL':LongPL, 'ShortPL':ShortPL,
         'LongPct':LongPct, 'ShortPct':ShortPct,
         'PositionSize':PositionSize,
+        'NumberOfRequests':NumberOfRequests, 'NumberOfOrders':NumberOfOrders,
         }, index=ohlcv.index))
 
 
 class BacktestReport:
     def __init__(self, DataFrame):
         self.DataFrame = DataFrame
+
+        # API利用状況
+        n_1min = int(max( 60 // (DataFrame.index[1] - DataFrame.index[0]).total_seconds(),1))
+        n_5min = int(max(300 // (DataFrame.index[1] - DataFrame.index[0]).total_seconds(),1))
+        requests = DataFrame['NumberOfRequests'].diff()
+        orders = DataFrame['NumberOfOrders'].diff()
+        self.DataFrame['Requests/min'] = requests.rolling(n_1min).sum()
+        self.DataFrame['Requests/5min'] = requests.rolling(n_5min).sum()
+        self.DataFrame['Orders/min'] = orders.rolling(n_1min).sum()
 
         # ロング統計
         LongPL = DataFrame['LongPL']
