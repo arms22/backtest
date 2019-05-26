@@ -77,6 +77,13 @@ def stdev(source, period):
     period = int(period)
     return source.rolling(period,min_periods=1).std()
 
+def stdev3(ohlc, period):
+    period = int(period)
+    avg = ((ohlc.high+ohlc.low+ohlc.close)/3).rolling(period,min_periods=1).mean()
+    avg_sq = ((ohlc.high**2+ohlc.low**2+ohlc.close**2)/3).rolling(period,min_periods=1).mean()
+    var = avg_sq - avg**2
+    return np.sqrt(var)
+
 def variance(source, period):
     period = int(period)
     return source.rolling(period,min_periods=1).var()
