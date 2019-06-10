@@ -69,7 +69,7 @@ def BacktestCore(Open, High, Low, Close, Volume, Trades, N,
                         buyEntryAcceptN = n
             OpenPrice = 0
             # 指値注文
-            if buyLimitEntry > 0 and Low[n] <= buyLimitEntry:
+            if buyLimitEntry > 0 and Low[n] < buyLimitEntry:
                 OpenPrice = buyLimitEntry
                 buyLimitEntry = 0
             # STOP注文
@@ -105,7 +105,7 @@ def BacktestCore(Open, High, Low, Close, Volume, Trades, N,
                         buyExitAcceptN = n
             ClosePrice = 0
             # 指値注文
-            if buyLimitExit > 0 and High[n] >= buyLimitExit:
+            if buyLimitExit > 0 and High[n] > buyLimitExit:
                 ClosePrice = buyLimitExit
                 buyLimitExit = 0
             # STOP注文
@@ -147,7 +147,7 @@ def BacktestCore(Open, High, Low, Close, Volume, Trades, N,
                         sellEntryAcceptN = n
             OpenPrice = 0
             # 指値注文
-            if sellLimitEntry > 0 and High[n] >= sellLimitEntry:
+            if sellLimitEntry > 0 and High[n] > sellLimitEntry:
                 OpenPrice = sellLimitEntry
                 sellLimitEntry = 0
             # STOP注文
@@ -183,7 +183,7 @@ def BacktestCore(Open, High, Low, Close, Volume, Trades, N,
                         sellExitAcceptN = n
             ClosePrice = 0
             # 指値注文
-            if sellLimitExit > 0 and Low[n] <= sellLimitExit:
+            if sellLimitExit > 0 and Low[n] < sellLimitExit:
                 ClosePrice = sellLimitExit
                 sellLimitExit = 0
             # STOP注文
@@ -510,11 +510,11 @@ def Backtest(ohlcv,
     trades_per_n = trades_per_second * timeframe
 
     # 基準時刻
-    Timestamp = ohlcv.index.astype(np.int64) / timeframe // 10**9
+    Timestamp = ohlcv.index.astype(np.int64) / 10**9
 
     # 遅延情報
     if 'delay' in ohlcv:
-        Delay = ((ohlcv.delay+timeframe/2)//timeframe).clip_lower(0).values
+        Delay = ohlcv.delay.clip_lower(0).values
     else:
         Delay = np.full(shape=(N), fill_value=int(delay_n))
 
@@ -527,7 +527,7 @@ def Backtest(ohlcv,
         # lp.add_function(BacktestCore2)
         # lp.add_function(yourlogic)
         # lp.enable()
-        BacktestCore2(Open.astype(float), High.astype(float), Low.astype(float), Close.astype(float), Volume.astype(float), Timestamp.astype(int), Delay.astype(int), N, yourlogic,
+        BacktestCore2(Open.astype(float), High.astype(float), Low.astype(float), Close.astype(float), Volume.astype(float), Timestamp.astype(float), Delay.astype(float), N, yourlogic,
             LongTrade, LongPL, LongPct, ShortTrade, ShortPL, ShortPct, PositionSize, NumberOfRequests, NumberOfOrders)
         # lp.disable()
         # lp.print_stats()
