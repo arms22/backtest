@@ -271,7 +271,7 @@ def BacktestCore(Open, High, Low, Close, Volume, Trades, N,
         ShortPL[N-1] = (sellExecPrice - ClosePrice) * sellExecLot #損益確定
         ShortPct[N-1] = ShortPL[N-1] / sellExecPrice
 
-def BacktestCore2(Open, High, Low, Close, Volume, Timestamp, Delay, N, YourLogic,
+def BacktestCore2(Open, High, Low, Close, Bid, Ask, Volume, Timestamp, Delay, N, YourLogic,
                   LongTrade, LongPL, LongPct, ShortTrade, ShortPL, ShortPct, PositionSize, NumberOfRequests, NumberOfOrders):
 
     class Strategy:
@@ -325,7 +325,7 @@ def BacktestCore2(Open, High, Low, Close, Volume, Timestamp, Delay, N, YourLogic
     for n in range(1, N):
 
         # OHLCV取得
-        O, H, L, C, V, T = Open[n], High[n], Low[n], Close[n], Volume[n], Timestamp[n]
+        O, H, L, C, bid, ask, V, T = Open[n], High[n], Low[n], Close[n], Bid[n], Ask[n], Volume[n], Timestamp[n]
 
         # 新規注文受付
         executions, remaining, remaining_orders, exec_t = [], [], {}, T-Delay[n]
@@ -355,7 +355,7 @@ def BacktestCore2(Open, High, Low, Close, Volume, Timestamp, Delay, N, YourLogic
         # 約定処理
         for e in executions:
             o_side, exec_price, o_size, o_id, _ = e
-            exec_price = exec_price if exec_price>0 else O
+            exec_price = exec_price if exec_price>0 else ask if o_side>0 else bid
 
             # 注文情報保存
             if o_side > 0:
@@ -449,6 +449,14 @@ def Backtest(ohlcv,
     High = ohlcv.high.values #高値
     Close = ohlcv.close.values #始値
     Volume = ohlcv.volume.values #出来高
+    if 'bid' in ohlcv:
+        Bid = ohlcv.bid.values
+    else:
+        Bid = Close
+    if 'ask' in ohlcv:
+        Ask = ohlcv.ask.values
+    else:
+        Ask = Close
 
     N = len(ohlcv) #データサイズ
     buyExecPrice = sellExecPrice = 0.0 # 売買価格
@@ -500,7 +508,7 @@ def Backtest(ohlcv,
     limit_sell_exit = place_holder if limit_sell_exit is None else limit_sell_exit.values
 
     # タイムフレーム
-    timeframe = (ohlcv.index[1] - ohlcv.index[0]).total_seconds()
+    timeframe = (ohlcv.index[-1] - ohlcv.index[0]).total_seconds()/N
 
     # 約定数
     if 'trades' in ohlcv:
@@ -514,7 +522,7 @@ def Backtest(ohlcv,
 
     # 遅延情報
     if 'delay' in ohlcv:
-        Delay = ohlcv.delay.clip_lower(0).values
+        Delay = ohlcv.delay.clip_lower(0.25).values
     else:
         Delay = np.full(shape=(N), fill_value=int(delay_n))
 
@@ -527,7 +535,7 @@ def Backtest(ohlcv,
         # lp.add_function(BacktestCore2)
         # lp.add_function(yourlogic)
         # lp.enable()
-        BacktestCore2(Open.astype(float), High.astype(float), Low.astype(float), Close.astype(float), Volume.astype(float), Timestamp.astype(float), Delay.astype(float), N, yourlogic,
+        BacktestCore2(Open.astype(float), High.astype(float), Low.astype(float), Close.astype(float), Bid.astype(float), Ask.astype(float), Volume.astype(float), Timestamp.astype(float), Delay.astype(float), N, yourlogic,
             LongTrade, LongPL, LongPct, ShortTrade, ShortPL, ShortPct, PositionSize, NumberOfRequests, NumberOfOrders)
         # lp.disable()
         # lp.print_stats()
@@ -559,8 +567,10 @@ class BacktestReport:
         self.DataFrame = DataFrame
 
         # API利用状況
-        n_1min = int(max( 60 // (DataFrame.index[1] - DataFrame.index[0]).total_seconds(),1))
-        n_5min = int(max(300 // (DataFrame.index[1] - DataFrame.index[0]).total_seconds(),1))
+        N = len(DataFrame)
+        timeframe = (DataFrame.index[-1] - DataFrame.index[0]).total_seconds()/N
+        n_1min = int(max( 60 // timeframe,1))
+        n_5min = int(max(300 // timeframe,1))
         requests = DataFrame['NumberOfRequests'].diff()
         orders = DataFrame['NumberOfOrders'].diff()
         self.DataFrame['Requests/min'] = requests.rolling(n_1min).sum()
@@ -645,6 +655,7 @@ class BacktestReport:
 
         # 資産
         self.Equity = (LongPL + ShortPL).cumsum()
+        self.DataFrame['Equity'] = self.Equity
 
         # 全体統計
         self.All = dotdict()
