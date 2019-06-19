@@ -271,7 +271,7 @@ def BacktestCore(Open, High, Low, Close, Volume, Trades, N,
         ShortPL[N-1] = (sellExecPrice - ClosePrice) * sellExecLot #損益確定
         ShortPct[N-1] = ShortPL[N-1] / sellExecPrice
 
-def BacktestCore2(Open, High, Low, Close, Bid, Ask, Volume, Timestamp, Delay, N, YourLogic,
+def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Timestamp, Delay, N, YourLogic,
                   LongTrade, LongPL, LongPct, ShortTrade, ShortPL, ShortPct, PositionSize, NumberOfRequests, NumberOfOrders):
 
     class Strategy:
@@ -325,7 +325,7 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, Volume, Timestamp, Delay, N,
     for n in range(1, N):
 
         # OHLCV取得
-        O, H, L, C, bid, ask, V, T = Open[n], High[n], Low[n], Close[n], Bid[n], Ask[n], Volume[n], Timestamp[n]
+        O, H, L, C, bid, ask, bv, sv, T = Open[n], High[n], Low[n], Close[n], Bid[n], Ask[n], BuyVolume[n], SellVolume[n], Timestamp[n]
 
         # 新規注文受付
         executions, remaining, remaining_orders, exec_t = [], [], {}, T-Delay[n]
@@ -340,7 +340,7 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, Volume, Timestamp, Delay, N,
             open_orders = {k:v for k,v in open_orders.items() if v[2]>0 and n<v[4]}
 
             # 約定判定（成行と指値のみ対応/現在の足で約定）
-            es = [o for o in open_orders.values() if (o[1]==0) or (o[1]>0 and ((o[0]<0 and H>o[1]) or (o[0]>0 and L<o[1])))]
+            es = [o for o in open_orders.values() if (o[1]==0) or (o[1]>0 and ((o[0]<0 and H>o[1] and bv>0.00000001) or (o[0]>0 and L<o[1] and sv>0.00000001)))]
 
             #  約定履歴更新
             executions.extend(es)
@@ -354,8 +354,17 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, Volume, Timestamp, Delay, N,
 
         # 約定処理
         for e in executions:
-            o_side, exec_price, o_size, o_id, _ = e
-            exec_price = exec_price if exec_price>0 else ask if o_side>0 else bid
+            o_side, o_price, o_size, o_id, o_expire_at = e
+
+            # 約定価格
+            exec_price = o_price if o_price>0 else ask if o_side>0 else bid
+
+            # 約定サイズ
+            exec_size = min(o_size, sv if o_side>0 else bv)
+
+            # 部分約定なら残サイズを戻す
+            # if exec_size < o_size:
+            #     open_orders[o_id] = (o_side, o_price, o_size-exec_size, o_id, o_expire_at)
 
             # 注文情報保存
             if o_side > 0:
@@ -364,8 +373,8 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, Volume, Timestamp, Delay, N,
                 ShortTrade[n] = exec_price
 
             # ポジション追加
-            positions.append((o_side, exec_price, o_size))
-            # print(n, 'Exec', o_id, o_side, exec_price, o_size)
+            positions.append((o_side, exec_price, exec_size))
+            # print(n, 'Exec', o_id, o_side, exec_price, exec_size)
 
             # 決済
             while len(positions)>=2:
@@ -457,6 +466,14 @@ def Backtest(ohlcv,
         Ask = ohlcv.ask.values
     else:
         Ask = Close
+    if 'buy_volume' in ohlcv:
+        BuyVolume = ohlcv.buy_volume.values
+    else:
+        BuyVolume = ohlcv.volume.values/2
+    if 'sell_volume' in ohlcv:
+        SellVolume = ohlcv.sell_volume.values
+    else:
+        SellVolume = ohlcv.volume.values/2
 
     N = len(ohlcv) #データサイズ
     buyExecPrice = sellExecPrice = 0.0 # 売買価格
@@ -535,7 +552,8 @@ def Backtest(ohlcv,
         # lp.add_function(BacktestCore2)
         # lp.add_function(yourlogic)
         # lp.enable()
-        BacktestCore2(Open.astype(float), High.astype(float), Low.astype(float), Close.astype(float), Bid.astype(float), Ask.astype(float), Volume.astype(float), Timestamp.astype(float), Delay.astype(float), N, yourlogic,
+        BacktestCore2(Open.astype(float), High.astype(float), Low.astype(float), Close.astype(float), Bid.astype(float), Ask.astype(float),
+            BuyVolume.astype(float), SellVolume.astype(float), Timestamp.astype(float), Delay.astype(float), N, yourlogic,
             LongTrade, LongPL, LongPct, ShortTrade, ShortPL, ShortPct, PositionSize, NumberOfRequests, NumberOfOrders)
         # lp.disable()
         # lp.print_stats()
