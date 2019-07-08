@@ -340,7 +340,7 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Times
             open_orders = {k:v for k,v in open_orders.items() if v[2]>0 and n<v[4]}
 
             # 約定判定（成行と指値のみ対応/現在の足で約定）
-            es = [o for o in open_orders.values() if (o[1]==0) or (o[1]>0 and ((o[0]<0 and H>o[1] and bv>0.00000001) or (o[0]>0 and L<o[1] and sv>0.00000001)))]
+            es = [o for o in open_orders.values() if (o[1]==0) or (o[1]>0 and ((o[0]<0 and H>o[1]) or (o[0]>0 and L<o[1])))]
 
             #  約定履歴更新
             executions.extend(es)
@@ -360,7 +360,7 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Times
             exec_price = o_price if o_price>0 else ask if o_side>0 else bid
 
             # 約定サイズ
-            exec_size = min(o_size, sv if o_side>0 else bv)
+            exec_size = min(o_size, sv*(o_price-L) if o_side>0 else bv*(H-o_price)) if o_price>0 else o_size
 
             # 部分約定なら残サイズを戻す
             # if exec_size < o_size:
@@ -467,13 +467,13 @@ def Backtest(ohlcv,
     else:
         Ask = Close
     if 'buy_volume' in ohlcv:
-        BuyVolume = ohlcv.buy_volume.values
+        BuyVolume = (ohlcv.buy_volume/(ohlcv.high-ohlcv.low).clip_lower(1)).values
     else:
-        BuyVolume = ohlcv.volume.values/2
+        BuyVolume = (ohlcv.volume/2/(ohlcv.high-ohlcv.low).clip_lower(1)).values
     if 'sell_volume' in ohlcv:
-        SellVolume = ohlcv.sell_volume.values
+        SellVolume = (ohlcv.sell_volume/(ohlcv.high-ohlcv.low).clip_lower(1)).values
     else:
-        SellVolume = ohlcv.volume.values/2
+        SellVolume = (ohlcv.volume/2/(ohlcv.high-ohlcv.low).clip_lower(1)).values
 
     N = len(ohlcv) #データサイズ
     buyExecPrice = sellExecPrice = 0.0 # 売買価格
