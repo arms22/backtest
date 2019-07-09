@@ -340,7 +340,7 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Times
             open_orders = {k:v for k,v in open_orders.items() if v[2]>0 and n<v[4]}
 
             # 約定判定（成行と指値のみ対応/現在の足で約定）
-            es = [o for o in open_orders.values() if (o[1]==0) or (o[1]>0 and ((o[0]<0 and H>o[1]) or (o[0]>0 and L<o[1])))]
+            es = [o for o in open_orders.values() if (o[1]==0) or (o[1]>0 and ((o[0]<0 and H>o[1] and bv>0) or (o[0]>0 and L<o[1] and sv>0)))]
 
             #  約定履歴更新
             executions.extend(es)
