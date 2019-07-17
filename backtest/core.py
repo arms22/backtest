@@ -356,15 +356,35 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Times
         for e in executions:
             o_side, o_price, o_size, o_id, o_expire_at = e
 
+            # 約定価格とサイズ
+            if o_price>0:
+                if o_side>0:
+                    if o_price>H:
+                        exec_price = H
+                        exec_size = o_size
+                    else:
+                        exec_price = o_price
+                        exec_size = min(o_size, sv*(exec_price-L))
+                else:
+                    if o_price<L:
+                        exec_price = L
+                        exec_size = o_size
+                    else:
+                        exec_price = o_price
+                        exec_size = min(o_size, bv*(H-exec_price))
+            else:
+                exec_price = ask if o_side>0 else bid
+                exec_size = o_size
+
             # 約定価格
-            exec_price = o_price if o_price>0 else ask if o_side>0 else bid
+            # exec_price = o_price if o_price>0 else ask if o_side>0 else bid
 
             # 約定サイズ
-            exec_size = min(o_size, sv*(o_price-L) if o_side>0 else bv*(H-o_price)) if o_price>0 else o_size
+            # exec_size = min(o_size, sv*(o_price-L) if o_side>0 else bv*(H-o_price)) if o_price>0 else o_size
 
             # 部分約定なら残サイズを戻す
-            # if exec_size < o_size:
-            #     open_orders[o_id] = (o_side, o_price, o_size-exec_size, o_id, o_expire_at)
+            if exec_size < o_size:
+                open_orders[o_id] = (o_side, o_price, o_size-exec_size, o_id, o_expire_at)
 
             # 注文情報保存
             if o_side > 0:
