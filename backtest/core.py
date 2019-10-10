@@ -287,15 +287,17 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Times
             self.number_of_orders = 0
 
         def order(self, myid, side, qty, limit=0, expire_at=N+1):
-            if (myid not in self.accept_orders):
+            if myid not in self.accept_orders:
                 # オープン注文がある場合、キャンセル分足す
                 self.number_of_requests += 2 if myid in self.open_orders else 1
                 self.number_of_orders += 1
                 self.orders[myid] = (+1 if side=='buy' else -1, limit, qty, myid, expire_at)
 
         def cancel(self, myid):
-            self.number_of_requests += 1
-            self.orders[myid] = (0, 0, 0, myid)
+            if myid not in self.accept_orders:
+                if myid in self.open_orders:
+                    self.number_of_requests += 1
+                    self.orders[myid] = (0, 0, 0, myid)
 
         def cancel_order_all(self):
             for o in self.open_orders.values():
@@ -359,69 +361,55 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Times
             # 約定価格とサイズ
             if o_price>0:
                 if o_side>0:
-                    if o_price>H:
-                        exec_price = H
-                        exec_size = o_size
-                    else:
-                        exec_price = o_price
-                        exec_size = min(o_size, sv*(exec_price-L))
+                    exec_price = o_price
+                    exec_size = min(o_size, sv*(exec_price-L))
                 else:
-                    if o_price<L:
-                        exec_price = L
-                        exec_size = o_size
-                    else:
-                        exec_price = o_price
-                        exec_size = min(o_size, bv*(H-exec_price))
+                    exec_price = o_price
+                    exec_size = min(o_size, bv*(H-exec_price))
             else:
                 exec_price = ask if o_side>0 else bid
                 exec_size = o_size
-
-            # 約定価格
-            # exec_price = o_price if o_price>0 else ask if o_side>0 else bid
-
-            # 約定サイズ
-            # exec_size = min(o_size, sv*(o_price-L) if o_side>0 else bv*(H-o_price)) if o_price>0 else o_size
 
             # 部分約定なら残サイズを戻す
             if exec_size < o_size:
                 open_orders[o_id] = (o_side, o_price, o_size-exec_size, o_id, o_expire_at)
 
-            # 注文情報保存
-            if o_side > 0:
-                LongTrade[n] = exec_price
-            else:
-                ShortTrade[n] = exec_price
-
-            # ポジション追加
-            positions.append((o_side, exec_price, exec_size))
-            # print(n, 'Exec', o_id, o_side, exec_price, exec_size)
-
-            # 決済
-            while len(positions)>=2:
-                if positions[0][0] != positions[-1][0]:
-                    l_side, l_price, l_size = positions.popleft()
-                    r_side, r_price, r_size = positions.pop()
-                    if l_size >= r_size:
-                        pnl = (r_price - l_price) * (r_size * l_side)
-                        l_size = round(l_size-r_size,8)
-                        if l_size > 0:
-                            positions.appendleft((l_side,l_price,l_size))
-                        # print(n, 'Close', l_side, l_price, r_size, r_price, pnl)
-                    else:
-                        pnl = (r_price - l_price) * (l_size * l_side)
-                        r_size = round(r_size-l_size,8)
-                        if r_size > 0:
-                            positions.append((r_side,r_price,r_size))
-                        # print(n, 'Close', l_side, l_price, l_size, r_price, pnl)
-                    # 決済情報保存
-                    if l_side > 0:
-                        LongPL[n] = LongPL[n]+pnl
-                        LongPct[n] = LongPL[n]/r_price
-                    else:
-                        ShortPL[n] = ShortPL[n]+pnl
-                        ShortPct[n] = ShortPL[n]/r_price
+            if exec_size>0:
+                # 注文情報保存
+                if o_side > 0:
+                    LongTrade[n] = exec_price
                 else:
-                    break
+                    ShortTrade[n] = exec_price
+
+                # ポジション追加
+                positions.append((o_side, exec_price, exec_size))
+
+                # 決済
+                while len(positions)>=2:
+                    if positions[0][0] != positions[-1][0]:
+                        l_side, l_price, l_size = positions.popleft()
+                        r_side, r_price, r_size = positions.pop()
+                        if l_size >= r_size:
+                            pnl = (r_price - l_price) * (r_size * l_side)
+                            l_size = round(l_size-r_size,8)
+                            if l_size > 0:
+                                positions.appendleft((l_side,l_price,l_size))
+                            # print(n, 'Close', l_side, l_price, r_size, r_price, pnl)
+                        else:
+                            pnl = (r_price - l_price) * (l_size * l_side)
+                            r_size = round(r_size-l_size,8)
+                            if r_size > 0:
+                                positions.append((r_side,r_price,r_size))
+                            # print(n, 'Close', l_side, l_price, l_size, r_price, pnl)
+                        # 決済情報保存
+                        if l_side > 0:
+                            LongPL[n] = LongPL[n]+pnl
+                            LongPct[n] = LongPL[n]/r_price
+                        else:
+                            ShortPL[n] = ShortPL[n]+pnl
+                            ShortPct[n] = ShortPL[n]/r_price
+                    else:
+                        break
 
         # ポジションサイズ計算
         if len(positions):
@@ -481,11 +469,11 @@ def Backtest(ohlcv,
     if 'bid' in ohlcv:
         Bid = ohlcv.bid.values
     else:
-        Bid = Close
+        Bid = Open
     if 'ask' in ohlcv:
         Ask = ohlcv.ask.values
     else:
-        Ask = Close
+        Ask = Open
     if 'buy_volume' in ohlcv:
         BuyVolume = (ohlcv.buy_volume/(ohlcv.high-ohlcv.low).clip_lower(1)).values
     else:
@@ -559,7 +547,7 @@ def Backtest(ohlcv,
 
     # 遅延情報
     if 'delay' in ohlcv:
-        Delay = ohlcv.delay.clip_lower(0.25).values
+        Delay = ohlcv.delay.clip_lower(0).values
     else:
         Delay = np.full(shape=(N), fill_value=int(delay_n))
 
