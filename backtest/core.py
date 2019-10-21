@@ -5,7 +5,7 @@ import math
 from numba import jit, b1, f8, i8, void
 from .utils import dotdict
 from hyperopt import hp, tpe, Trials, fmin, rand, anneal
-from collections import deque
+from collections import deque, defaultdict
 
 # PythonでFXシストレのバックテスト(1)
 # https://qiita.com/toyolab/items/e8292d2f051a88517cb2 より
@@ -285,36 +285,53 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Times
             self.orders = {}
             self.number_of_requests = 0
             self.number_of_orders = 0
+            self.order_ref_id = 1
+            self.order_ref_id_from = defaultdict(int)
 
         def order(self, myid, side, qty, limit=0, expire_at=N+1):
-            if myid not in self.accept_orders:
-                # オープン注文がある場合、キャンセル分足す
-                self.number_of_requests += 2 if myid in self.open_orders else 1
+            ref = self.order_ref_id_from[myid]
+            if (ref not in self.accept_orders):
+                # オープン注文がある場合キャンセル
+                if ref in self.open_orders:
+                    self.orders[ref] = (0, 0, 0, myid)
+                    self.number_of_requests += 1
+                self.number_of_requests += 1
                 self.number_of_orders += 1
-                self.orders[myid] = (+1 if side=='buy' else -1, limit, qty, myid, expire_at)
+                self.order_ref_id += 1
+                self.orders[self.order_ref_id] = (+1 if side=='buy' else -1, limit, qty, myid, expire_at)
+                self.order_ref_id_from[myid] = self.order_ref_id
 
         def cancel(self, myid):
-            if myid not in self.accept_orders:
-                if myid in self.open_orders:
+            ref = self.order_ref_id_from[myid]
+            if (ref not in self.accept_orders):
+                if ref in self.open_orders:
+                    self.orders[ref] = (0, 0, 0, myid)
                     self.number_of_requests += 1
-                    self.orders[myid] = (0, 0, 0, myid)
 
         def cancel_order_all(self):
-            for o in self.open_orders.values():
+            for k,o in self.open_orders.items():
                 self.number_of_requests += 1
-                self.orders[o[3]] = (0, 0, 0, o[3])
+                self.orders[k] = (0, 0, 0, o[3])
 
         def close_position(self):
             if self.position_size>0:
-                if '__Lc__' not in self.accept_orders:
+                myid = '__Lc__'
+                ref = self.order_ref_id_from[myid]
+                if ref not in self.accept_orders:
                     self.number_of_requests += 1
                     self.number_of_orders += 1
-                    self.orders['__Lc__'] = (-1, 0, self.position_size, '__Lc__', N+1)
+                    self.order_ref_id += 1
+                    self.orders[self.order_ref_id] = (-1, 0, self.position_size, myid, N+1)
+                    self.order_ref_id_from[myid] = self.order_ref_id
             elif self.position_size<0:
-                if '__Sc__' not in self.accept_orders:
+                myid = '__Sc__'
+                ref = self.order_ref_id_from[myid]
+                if ref not in self.accept_orders:
                     self.number_of_requests += 1
                     self.number_of_orders += 1
-                    self.orders['__Sc__'] = (1, 0, -self.position_size, '__Sc__', N+1)
+                    self.order_ref_id += 1
+                    self.orders[self.order_ref_id] = (1, 0, -self.position_size, myid, N+1)
+                    self.order_ref_id_from[myid] = self.order_ref_id
 
     positions = deque()
     position_size = 0
@@ -330,7 +347,7 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Times
         O, H, L, C, bid, ask, bv, sv, T = Open[n], High[n], Low[n], Close[n], Bid[n], Ask[n], BuyVolume[n], SellVolume[n], Timestamp[n]
 
         # 新規注文受付
-        executions, remaining, remaining_orders, exec_t = [], [], {}, T-Delay[n]
+        executions, remaining, remaining_orders, exec_t = {}, [], {}, T-Delay[n]
         for accept_t, o in accept_orders:
             if exec_t>accept_t:
                 open_orders.update(o)
@@ -339,23 +356,23 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Times
                 remaining_orders.update(o)
 
             # サイズ0の注文・期限切れの注文キャンセル
-            open_orders = {k:v for k,v in open_orders.items() if v[2]>0 and n<v[4]}
+            open_orders = {k:o for k,o in open_orders.items() if o[2]>0 and n<o[4]}
 
             # 約定判定（成行と指値のみ対応/現在の足で約定）
-            es = [o for o in open_orders.values() if (o[1]==0) or (o[1]>0 and ((o[0]<0 and H>o[1] and bv>0) or (o[0]>0 and L<o[1] and sv>0)))]
+            es = {k:o for k,o in open_orders.items() if (o[1]==0) or (o[1]>0 and ((o[0]<0 and H>o[1] and bv>0) or (o[0]>0 and L<o[1] and sv>0)))}
 
             #  約定履歴更新
-            executions.extend(es)
+            executions.update(es)
 
             # 約定した注文を削除
-            for e in es:
-                del open_orders[e[3]]
+            for k in es.keys():
+                del open_orders[k]
 
         # 残った注文は次の足で処理
         accept_orders = remaining
 
         # 約定処理
-        for e in executions:
+        for k,e in executions.items():
             o_side, o_price, o_size, o_id, o_expire_at = e
 
             # 約定価格とサイズ
@@ -372,7 +389,7 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Times
 
             # 部分約定なら残サイズを戻す
             if exec_size < o_size:
-                open_orders[o_id] = (o_side, o_price, o_size-exec_size, o_id, o_expire_at)
+                open_orders[k] = (o_side, o_price, o_size-exec_size, o_id, o_expire_at)
 
             if exec_size>0:
                 # 注文情報保存
