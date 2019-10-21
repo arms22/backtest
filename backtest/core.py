@@ -293,25 +293,25 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Times
             if (ref not in self.accept_orders):
                 # オープン注文がある場合キャンセル
                 if ref in self.open_orders:
-                    self.orders[ref] = (0, 0, 0, myid)
+                    self.orders[ref] = {'side':0, 'limit':0, 'size':0, 'myid':myid, 'expire_at':0}
                     self.number_of_requests += 1
                 self.number_of_requests += 1
                 self.number_of_orders += 1
                 self.order_ref_id += 1
-                self.orders[self.order_ref_id] = (+1 if side=='buy' else -1, limit, qty, myid, expire_at)
+                self.orders[self.order_ref_id] = {'side':1 if side=='buy' else -1, 'limit':limit, 'size':qty, 'myid':myid, 'expire_at':expire_at}
                 self.order_ref_id_from[myid] = self.order_ref_id
 
         def cancel(self, myid):
             ref = self.order_ref_id_from[myid]
             if (ref not in self.accept_orders):
                 if ref in self.open_orders:
-                    self.orders[ref] = (0, 0, 0, myid)
+                    self.orders[ref] = {'side':0, 'limit':0, 'size':0, 'myid':myid, 'expire_at':0}
                     self.number_of_requests += 1
 
         def cancel_order_all(self):
             for k,o in self.open_orders.items():
                 self.number_of_requests += 1
-                self.orders[k] = (0, 0, 0, o[3])
+                self.orders[k] = {'side':0, 'limit':0, 'size':0, 'myid':o['myid'], 'expire_at':0}
 
         def close_position(self):
             if self.position_size>0:
@@ -321,7 +321,8 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Times
                     self.number_of_requests += 1
                     self.number_of_orders += 1
                     self.order_ref_id += 1
-                    self.orders[self.order_ref_id] = (-1, 0, self.position_size, myid, N+1)
+                    self.orders[self.order_ref_id] = {'side':-1, 'limit':0, 'size':self.position_size,\
+                        'myid':myid, 'expire_at':0}
                     self.order_ref_id_from[myid] = self.order_ref_id
             elif self.position_size<0:
                 myid = '__Sc__'
@@ -330,7 +331,9 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Times
                     self.number_of_requests += 1
                     self.number_of_orders += 1
                     self.order_ref_id += 1
-                    self.orders[self.order_ref_id] = (1, 0, -self.position_size, myid, N+1)
+                    # self.orders[self.order_ref_id] = (1, 0, -self.position_size, myid, N+1)
+                    self.orders[self.order_ref_id] = {'side':1, 'limit':0, 'size':-self.position_size,\
+                        'myid':myid, 'expire_at':0}
                     self.order_ref_id_from[myid] = self.order_ref_id
 
     positions = deque()
@@ -356,10 +359,11 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Times
                 remaining_orders.update(o)
 
             # サイズ0の注文・期限切れの注文キャンセル
-            open_orders = {k:o for k,o in open_orders.items() if o[2]>0 and n<o[4]}
+            open_orders = {k:o for k,o in open_orders.items() if o['size']>0 and n<o['expire_at']}
 
             # 約定判定（成行と指値のみ対応/現在の足で約定）
-            es = {k:o for k,o in open_orders.items() if (o[1]==0) or (o[1]>0 and ((o[0]<0 and H>o[1] and bv>0) or (o[0]>0 and L<o[1] and sv>0)))}
+            es = {k:o for k,o in open_orders.items() if (o['limit']==0) or\
+                ((o['side']<0 and H>o['limit'] and bv>0) or (o['side']>0 and L<o['limit'] and sv>0))}
 
             #  約定履歴更新
             executions.update(es)
@@ -373,7 +377,7 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Times
 
         # 約定処理
         for k,e in executions.items():
-            o_side, o_price, o_size, o_id, o_expire_at = e
+            o_side, o_price, o_size = e['side'], e['limit'], e['size']
 
             # 約定価格とサイズ
             if o_price>0:
@@ -389,7 +393,8 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Times
 
             # 部分約定なら残サイズを戻す
             if exec_size < o_size:
-                open_orders[k] = (o_side, o_price, o_size-exec_size, o_id, o_expire_at)
+                open_orders[k] = e.copy()
+                open_orders[k]['size'] = o_size-exec_size
 
             if exec_size>0:
                 # 注文情報保存
