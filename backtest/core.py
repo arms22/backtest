@@ -446,13 +446,13 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Trade
         netprofit = netprofit + LongPL[n] + ShortPL[n]
 
         # 注文作成
-        strategy.positions, strategy.position_size, strategy.position_avg_price, strategy.netprofit, strategy.new_orders, strategy.cancel_orders = \
-            list(positions), position_size, position_avg_price, netprofit, {}, {}
+        strategy.positions, strategy.position_size, strategy.position_avg_price, strategy.netprofit, strategy.active_orders, strategy.new_orders, strategy.cancel_orders = \
+            list(positions), position_size, position_avg_price, netprofit, open_orders, {}, {}
         YourLogic(O, H, L, C, n, strategy)
 
         # 注文
-        accept_orders.append((T+0.1,strategy.cancel_orders))
-        accept_orders.append((T+0.2,strategy.new_orders))
+        accept_orders.append((T+Delay[n],strategy.cancel_orders))
+        accept_orders.append((T+Delay[n],strategy.new_orders))
 
         # API発行回数・新規注文数保存
         NumberOfRequests[n] = strategy.number_of_requests
@@ -491,17 +491,17 @@ def Backtest(ohlcv,
     if 'bid' in ohlcv:
         Bid = ohlcv.bid.values
     else:
-        Bid = Open-spread
+        Bid = Close-spread/2
     if  'ask' in ohlcv:
         Ask = ohlcv.ask.values
     else:
-        Ask = Open+spread
+        Ask = Close+spread/2
     if 'buy_volume' in ohlcv:
-        BuyVolume = ohlcv.buy_volume
+        BuyVolume = ohlcv.buy_volume.values
     else:
         BuyVolume = Volume/2
     if 'sell_volume' in ohlcv:
-        SellVolume = ohlcv.sell_volume
+        SellVolume = ohlcv.sell_volume.values
     else:
         SellVolume = Volume/2
 
@@ -833,7 +833,6 @@ def BacktestIteration(testfunc, default_parameters, hyperopt_parameters, max_eva
     params = default_parameters.copy()
     params.update(best)
     report = go(params)
-    print(report)
     return (params, report)
 
 
