@@ -4,7 +4,7 @@ import pandas as pd
 import math
 from numba import jit, b1, f8, i8, void
 from .utils import dotdict
-from hyperopt import hp, tpe, Trials, fmin, rand, anneal
+from hyperopt import hp, tpe, Trials, fmin, rand, anneal, STATUS_OK
 from collections import deque, defaultdict
 
 # PythonでFXシストレのバックテスト(1)
@@ -343,7 +343,7 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Trade
     accept_orders = []
     strategy = Strategy()
 
-    for n in range(1, N):
+    for n in range(1, N-1):
 
         # OHLCV取得
         O, H, L, C, bid, ask, bv, sv, Tr, T = Open[n], High[n], Low[n], Close[n], Bid[n], Ask[n], BuyVolume[n], SellVolume[n], Trades[n], Timestamp[n]
@@ -788,32 +788,35 @@ class BacktestReport:
 # 参考
 # https://qiita.com/kenchin110100/items/ac3edb480d789481f134
 
-def BacktestIteration(testfunc, default_parameters, hyperopt_parameters, max_evals, maximize=lambda r:r.All.Profit):
+def BacktestIteration(testfunc, default_parameters, hyperopt_parameters, max_evals, maximize=lambda r:r.All.Profit, verbose=False):
 
-    needs_header = [True]
+    once = True
 
     def go(args):
+        nonlocal once
         params = default_parameters.copy()
         params.update(args)
         report = testfunc(**params)
-        result = {}
-        for k,v in params.items():
-            if not isinstance(v, pd.DataFrame):
-                result[k] = v
+        result = {k:v for k,v in params.items() if not isinstance(v, pd.DataFrame)}
         result.update(report.All)
-        if needs_header[0]:
-            print(','.join(result.keys()))
-        print(','.join([str(x) for x in result.values()]))
-        needs_header[0] = False
-        return report
+        if verbose:
+            if once:
+                print(','.join(result.keys()))
+                once = False
+            print(','.join([str(x) for x in result.values()]))
+        return {
+            'loss':-1 * maximize(report),
+            'status':STATUS_OK,
+            'other_stuff':result,
+        }
 
-    if max_evals > 0:
-        # 試行の過程を記録するインスタンス
-        trials = Trials()
+    # 試行の過程を記録するインスタンス
+    trials = Trials()
 
+    if max_evals>0:
         best = fmin(
             # 最小化する値を定義した関数
-            lambda args: -1 * maximize(go(args)),
+            go,
             # 探索するパラメータのdictもしくはlist
             hyperopt_parameters,
             # どのロジックを利用するか、基本的にはtpe.suggestでok
@@ -827,13 +830,19 @@ def BacktestIteration(testfunc, default_parameters, hyperopt_parameters, max_eva
             # 試行の過程を出力
             verbose=0
         )
+        params = default_parameters.copy()
+        params.update(best)
+        report = testfunc(**params)
+        results = pd.DataFrame([r['other_stuff'] for r in trials.results])
     else:
-        best = default_parameters
-
-    params = default_parameters.copy()
-    params.update(best)
-    report = go(params)
-    return (params, report)
+        best = {k:default_parameters[k] for k in hyperopt_parameters.keys()}
+        params = default_parameters.copy()
+        params.update(best)
+        report = testfunc(**params)
+        result = {k:v for k,v in params.items() if not isinstance(v, pd.DataFrame)}
+        result.update(report.All)
+        results = pd.DataFrame([result])
+    return best, report, results
 
 
 if __name__ == '__main__':
