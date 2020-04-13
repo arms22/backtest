@@ -271,7 +271,7 @@ def BacktestCore(Open, High, Low, Close, Volume, Trades, N,
         ShortPL[N-1] = (sellExecPrice - ClosePrice) * sellExecLot #損益確定
         ShortPct[N-1] = ShortPL[N-1] / sellExecPrice
 
-def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Trades, Timestamp, Delay, N, YourLogic,
+def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Trades, Timestamp, Delay, N, YourLogic, EntryTiming,
                   LongTrade, LongPL, LongPct, ShortTrade, ShortPL, ShortPct, PositionSize, NumberOfRequests, NumberOfOrders):
     EXPIRE_MAX = np.finfo(np.float64).max
     class Strategy:
@@ -287,6 +287,7 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Trade
             self.number_of_orders = 0
             self.order_ref_id = 1
             self.order_ref_id_from = defaultdict(int)
+            self.prev_n = 0
 
         def order(self, myid, side, qty, limit=0, expire_at=EXPIRE_MAX):
             ref = self.order_ref_id_from[myid]
@@ -301,6 +302,21 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Trade
             self.new_orders[self.order_ref_id] = order
             self.active_orders[self.order_ref_id] = order
             self.order_ref_id_from[myid] = self.order_ref_id
+
+        def close(self, myid, side, qty, limit=0, profit=None, loss=None, entryPrice=None, lsatPrice=None):
+            if lsatPrice and entryPrice:
+                if 'buy' == side:
+                    pnl = lsatPrice - entryPrice
+                else:
+                    pnl = entryPrice - lsatPrice
+                if profit and pnl>profit:
+                    self.order(myid,side,qty,limit)
+                elif loss and pnl<-loss:
+                    self.order(myid,side,qty,limit)
+                else:
+                    self.cancel(myid)
+            else:
+                self.order(myid,side,qty,limit)
 
         def cancel(self, myid):
             ref = self.order_ref_id_from[myid]
@@ -346,7 +362,7 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Trade
     for n in range(1, N-1):
 
         # OHLCV取得
-        O, H, L, C, bid, ask, bv, sv, Tr, T = Open[n], High[n], Low[n], Close[n], Bid[n], Ask[n], BuyVolume[n], SellVolume[n], Trades[n], Timestamp[n]
+        O, H, L, C, bid, ask, bv, sv, Tr, T, CanEntry = Open[n], High[n], Low[n], Close[n], Bid[n], Ask[n], BuyVolume[n], SellVolume[n], Trades[n], Timestamp[n], EntryTiming[n]
 
         # 注文受付
         remaining, exec_t = [], T-Delay[n]
@@ -448,11 +464,13 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Trade
         # 注文作成
         strategy.positions, strategy.position_size, strategy.position_avg_price, strategy.netprofit, strategy.active_orders, strategy.new_orders, strategy.cancel_orders = \
             list(positions), position_size, position_avg_price, netprofit, open_orders, {}, {}
-        YourLogic(O, H, L, C, n, strategy)
+        if CanEntry:
+            YourLogic(O, H, L, C, n, strategy)
+            strategy.prev_n = n
 
         # 注文
-        accept_orders.append((T+Delay[n],strategy.cancel_orders))
-        accept_orders.append((T+Delay[n],strategy.new_orders))
+        accept_orders.append((T+Delay[n]+0.1,strategy.cancel_orders))
+        accept_orders.append((T+Delay[n]+0.2,strategy.new_orders))
 
         # API発行回数・新規注文数保存
         NumberOfRequests[n] = strategy.number_of_requests
@@ -460,18 +478,21 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Trade
 
     # 残ポジションクローズ
     if len(positions):
-        position_size = math.fsum(p[2]*p[0] for p in positions)
-        position_avg_price = math.fsum(p[1]*p[2]*p[0] for p in positions)/position_size
+        position_size = math.fsum(p[2] for p in positions)
+        position_avg_price = math.fsum(p[1]*p[2] for p in positions) / position_size
+        position_size = position_size * positions[0][0]
         price = Close[N-1]
         pnl = (price - position_avg_price) * position_size
         if position_size > 0:
             # print(N-1, 'Close', 1, position_avg_price, position_size, price, pnl)
+            ShortTrade[N-1] = price
             LongPL[N-1] = pnl
-            LongTrade[N-1] = price
+            LongPct[N-1] = LongPL[N-1]/price
         elif position_size < 0:
             # print(N-1, 'Close', -1, position_avg_price, position_size, price, pnl)
+            LongTrade[N-1] = price
             ShortPL[N-1] = pnl
-            ShortTrade[N-1] = price
+            ShortPct[N-1] = ShortPL[N-1]/price
 
 
 def Backtest(ohlcv,
@@ -481,30 +502,13 @@ def Backtest(ohlcv,
     buy_size=1.0, sell_size=1.0, max_buy_size=1.0, max_sell_size=1.0,
     spread=0, take_profit=0, stop_loss=0, trailing_stop=0, slippage=0, percent_of_equity=0.0, initial_capital=0.0,
     trades_per_second = 0, delay_n = 0, order_restrict_n = 0, max_drawdown=0, wait_seconds_for_mdd=0, yourlogic=None,
-    bitflyer_rounding = False,
+    bitflyer_rounding = False, interval_yourlogic = None,
     **kwargs):
     Open = ohlcv.open.values #始値
     Low = ohlcv.low.values #安値
     High = ohlcv.high.values #高値
     Close = ohlcv.close.values #始値
     Volume = ohlcv.volume.values #出来高
-    if 'bid' in ohlcv:
-        Bid = ohlcv.bid.values
-    else:
-        Bid = Close-spread/2
-    if  'ask' in ohlcv:
-        Ask = ohlcv.ask.values
-    else:
-        Ask = Close+spread/2
-    if 'buy_volume' in ohlcv:
-        BuyVolume = ohlcv.buy_volume.values
-    else:
-        BuyVolume = Volume/2
-    if 'sell_volume' in ohlcv:
-        SellVolume = ohlcv.sell_volume.values
-    else:
-        SellVolume = Volume/2
-
     N = len(ohlcv) #データサイズ
     buyExecPrice = sellExecPrice = 0.0 # 売買価格
     buyStopEntry = buyStopExit = sellStopEntry = sellStopExit = 0
@@ -554,40 +558,64 @@ def Backtest(ohlcv,
     limit_buy_exit = place_holder if limit_buy_exit is None else limit_buy_exit.values
     limit_sell_exit = place_holder if limit_sell_exit is None else limit_sell_exit.values
 
-    # タイムフレーム
-    timeframe = (ohlcv.index[-1] - ohlcv.index[0]).total_seconds()/N
-
     # 約定数
     if 'trades' in ohlcv:
         Trades = ohlcv.trades.values
     else:
         Trades = place_holder
-    trades_per_n = trades_per_second * timeframe
-
-    # 基準時刻
-    Timestamp = ohlcv.index.astype(np.int64) / 10**9
-
-    # 遅延情報
-    if 'delay' in ohlcv:
-        Delay = ohlcv.delay.clip_lower(0).values
-    else:
-        Delay = np.full(shape=(N), fill_value=int(delay_n))
-
-    # ドローダウン時の待ち時間
-    wait_n_for_mdd = math.ceil(wait_seconds_for_mdd / timeframe)
 
     if yourlogic:
+        if 'bid' in ohlcv:
+            Bid = ohlcv.bid.values
+        else:
+            Bid = Close-spread/2
+        if  'ask' in ohlcv:
+            Ask = ohlcv.ask.values
+        else:
+            Ask = Close+spread/2
+        if 'buy_volume' in ohlcv:
+            BuyVolume = ohlcv.buy_volume.values
+        else:
+            BuyVolume = Volume/2
+        if 'sell_volume' in ohlcv:
+            SellVolume = ohlcv.sell_volume.values
+        else:
+            SellVolume = Volume/2
+
+        # 基準時刻
+        Timestamp = ohlcv.index.astype(np.int64) / 10**9
+
+        # 遅延情報
+        if 'delay' in ohlcv:
+            Delay = ohlcv.delay.clip_lower(0).values
+        else:
+            Delay = np.full(shape=(N), fill_value=int(delay_n))
+
+        # エントリータイミング
+        if interval_yourlogic:
+            EntryTiming = np.diff(Timestamp // interval_yourlogic)
+        else:
+            EntryTiming = np.full(shape=(N), fill_value=1)
         # import line_profiler
         # lp = line_profiler.LineProfiler()
         # lp.add_function(BacktestCore2)
         # lp.add_function(yourlogic)
         # lp.enable()
         BacktestCore2(Open.astype(float), High.astype(float), Low.astype(float), Close.astype(float), Bid.astype(float), Ask.astype(float),
-            BuyVolume.astype(float), SellVolume.astype(float), Trades.astype(int), Timestamp.astype(float), Delay.astype(float), N, yourlogic,
+            BuyVolume.astype(float), SellVolume.astype(float), Trades.astype(int), Timestamp.astype(float), Delay.astype(float), N, yourlogic, EntryTiming.astype(int),
             LongTrade, LongPL, LongPct, ShortTrade, ShortPL, ShortPct, PositionSize, NumberOfRequests, NumberOfOrders)
         # lp.disable()
         # lp.print_stats()
     else:
+        # タイムフレーム
+        timeframe = (ohlcv.index[-1] - ohlcv.index[0]).total_seconds()/N
+
+        # 1フレームあたりの約定数
+        trades_per_n = trades_per_second * timeframe
+
+        # ドローダウン時の待ち時間
+        wait_n_for_mdd = math.ceil(wait_seconds_for_mdd / timeframe)
+
         BacktestCore(Open.astype(float), High.astype(float), Low.astype(float), Close.astype(float), Volume.astype(float), Trades.astype(int), N,
             buy_entry, sell_entry, buy_exit, sell_exit,
             stop_buy_entry.astype(float), stop_sell_entry.astype(float), stop_buy_exit.astype(float), stop_sell_exit.astype(float),
