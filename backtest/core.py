@@ -288,6 +288,7 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Trade
             self.order_ref_id = 1
             self.order_ref_id_from = defaultdict(int)
             self.prev_n = 0
+            self.trailing_orders = {}
 
         def order(self, myid, side, qty, limit=0, expire_at=EXPIRE_MAX):
             ref = self.order_ref_id_from[myid]
@@ -303,18 +304,39 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Trade
             self.active_orders[self.order_ref_id] = order
             self.order_ref_id_from[myid] = self.order_ref_id
 
-        def close(self, myid, side, qty, limit=0, profit=None, loss=None, entryPrice=None, lsatPrice=None):
-            if lsatPrice and entryPrice:
-                if 'buy' == side:
-                    pnl = lsatPrice - entryPrice
+        def close(self, myid, side, qty, limit=0, take_profit=None, stop_loss=None, tralling_stop=None, entryPrice=None, lastPrice=None):
+            if lastPrice and entryPrice:
+                if tralling_stop:
+                    if myid in self.trailing_orders:
+                        if self.trailing_orders[myid]['entryPrice'] != entryPrice:
+                            del self.trailing_orders[myid]
+                    tralling_order = self.trailing_orders.get(myid,{
+                        'entryPrice':entryPrice,
+                        'trallingPrice':entryPrice,
+                    })
+                    price_change = lastPrice-tralling_order['trallingPrice']
+                    tralling_order['trallingPrice'] = lastPrice
+                    if 'buy' == side:
+                        if price_change>tralling_stop:
+                            self.order(myid,side,qty,limit)
+                        else:
+                            self.cancel(myid)
+                    else:
+                        if price_change<-tralling_stop:
+                            self.order(myid,side,qty,limit)
+                        else:
+                            self.cancel(myid)
                 else:
-                    pnl = entryPrice - lsatPrice
-                if profit and pnl>profit:
-                    self.order(myid,side,qty,limit)
-                elif loss and pnl<-loss:
-                    self.order(myid,side,qty,limit)
-                else:
-                    self.cancel(myid)
+                    if 'buy' == side:
+                        pnl = entryPrice - lastPrice
+                    else:
+                        pnl = lastPrice - entryPrice
+                    if take_profit and pnl>take_profit:
+                        self.order(myid,side,qty,limit)
+                    elif stop_loss and pnl<-stop_loss:
+                        self.order(myid,side,qty,limit)
+                    else:
+                        self.cancel(myid)
             else:
                 self.order(myid,side,qty,limit)
 
@@ -502,7 +524,7 @@ def Backtest(ohlcv,
     buy_size=1.0, sell_size=1.0, max_buy_size=1.0, max_sell_size=1.0,
     spread=0, take_profit=0, stop_loss=0, trailing_stop=0, slippage=0, percent_of_equity=0.0, initial_capital=0.0,
     trades_per_second = 0, delay_n = 0, order_restrict_n = 0, max_drawdown=0, wait_seconds_for_mdd=0, yourlogic=None,
-    bitflyer_rounding = False, interval_yourlogic = None,
+    bitflyer_rounding = False, interval_yourlogic = None, volume_yourlogic = None,
     **kwargs):
     Open = ohlcv.open.values #始値
     Low = ohlcv.low.values #安値
@@ -595,7 +617,10 @@ def Backtest(ohlcv,
         if interval_yourlogic:
             EntryTiming = np.diff(Timestamp // interval_yourlogic)
         else:
-            EntryTiming = np.full(shape=(N), fill_value=1)
+            if volume_yourlogic:
+                EntryTiming = np.diff(np.cumsum(ohlcv.volume.values) // volume_yourlogic)
+            else:
+                EntryTiming = np.full(shape=(N), fill_value=1)
         # import line_profiler
         # lp = line_profiler.LineProfiler()
         # lp.add_function(BacktestCore2)
