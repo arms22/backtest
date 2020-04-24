@@ -30,16 +30,16 @@ def fastsma(source, period):
     return pd.Series(r, index=source.index)
 
 def sma(source, period):
-    period = int(period)
+    period = int(period) if isinstance(period,float) else period
     return source.rolling(period,min_periods=1).mean()
 
 def dsma(source, period):
-    period = int(period)
+    period = int(period) if isinstance(period,float) else period
     sma = source.rolling(period).mean()
     return (sma * 2) - sma.rolling(period,min_periods=1).mean()
 
 def tsma(source, period):
-    period = int(period)
+    period = int(period) if isinstance(period,float) else period
     sma = source.rolling(period).mean()
     sma2 = sma.rolling(period,min_periods=1).mean()
     return (sma * 3) - (sma2 * 3) + sma2.rolling(period,min_periods=1).mean()
@@ -66,26 +66,26 @@ def rma(source, period):
     return source.ewm(alpha=alpha).mean()
 
 def highest(source, period):
-    period = int(period)
+    period = int(period) if isinstance(period,float) else period
     return source.rolling(period,min_periods=1).max()
 
 def lowest(source, period):
-    period = int(period)
+    period = int(period) if isinstance(period,float) else period
     return source.rolling(period,min_periods=1).min()
 
 def stdev(source, period):
-    period = int(period)
+    period = int(period) if isinstance(period,float) else period
     return source.rolling(period,min_periods=1).std()
 
 def stdev3(ohlc, period):
-    period = int(period)
+    period = int(period) if isinstance(period,float) else period
     avg = ((ohlc.high+ohlc.low+ohlc.close)/3).rolling(period,min_periods=1).mean()
     avg_sq = ((ohlc.high**2+ohlc.low**2+ohlc.close**2)/3).rolling(period,min_periods=1).mean()
     var = avg_sq - avg**2
     return np.sqrt(var)
 
 def variance(source, period):
-    period = int(period)
+    period = int(period) if isinstance(period,float) else period
     return source.rolling(period,min_periods=1).var()
 
 def rsi(source, period):
@@ -122,7 +122,7 @@ def macd(source, fastlen, slowlen, siglen, use_sma=False):
     return (macd, signal, macd-signal)
 
 def hlband(source, period):
-    period = int(period)
+    period = int(period) if isinstance(period,float) else period
     high = source.rolling(period).max()
     low = source.rolling(period).min()
     return (high, low)
@@ -215,7 +215,10 @@ def totuple(source):
 def tolist(source):
     return list(source.values.flatten())
 
-def change(source, period=1):
+def change(source, period=1, freq=None):
+    if freq:
+        return source-source.shift(freq=freq).fillna(0)
+    period = int(period) if isinstance(period,float) else period
     return source.diff(period).fillna(0)
 
 def falling(source, period=1):
@@ -430,11 +433,12 @@ def polyfline(source, period, deg=2):
     return pd.Series(poly, index=source.index)
 
 def correlation(source_a, source_b, period):
-    period = int(period)
+    period = int(period) if isinstance(period,float) else period
     return source_a.rolling(period).corr(source_b)
 
 def cumsum(source, period):
-    return source.rolling(int(period),min_periods=1).sum()
+    period = int(period) if isinstance(period,float) else period
+    return source.rolling(period,min_periods=1).sum()
 
 def hlc3(ohlcv):
     return (ohlcv.high+ohlcv.low+ohlcv.close)/3
@@ -452,7 +456,7 @@ def mfi(ohlcv, period):
     return 100-(100/(1+mr))
 
 def zscore(source, period):
-    period = int(period)
+    period = int(period) if isinstance(period,float) else period
     std = source.rolling(period,min_periods=1).std()
     avg = source.rolling(period,min_periods=1).mean()
     return (source-avg)/std

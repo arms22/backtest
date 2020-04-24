@@ -283,6 +283,7 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Trade
             self.active_orders = {}
             self.cancel_orders = {}
             self.new_orders = {}
+            self.accept_orders = {}
             self.number_of_requests = 0
             self.number_of_orders = 0
             self.order_ref_id = 1
@@ -295,14 +296,14 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Trade
             if ref in self.active_orders:
                 self.cancel_orders[ref] = {'size':0,'myid':myid}
                 self.number_of_requests += 1
-                del self.active_orders[ref]
-            self.number_of_requests += 1
-            self.number_of_orders += 1
-            self.order_ref_id += 1
-            order = {'side':1 if side=='buy' else -1, 'limit':limit, 'size':qty, 'myid':myid, 'expire_at':expire_at}
-            self.new_orders[self.order_ref_id] = order
-            self.active_orders[self.order_ref_id] = order
-            self.order_ref_id_from[myid] = self.order_ref_id
+            if ref not in self.accept_orders:
+                self.number_of_requests += 1
+                self.number_of_orders += 1
+                self.order_ref_id += 1
+                order = {'side':1 if side=='buy' else -1, 'limit':limit, 'size':qty, 'myid':myid, 'expire_at':expire_at}
+                self.new_orders[self.order_ref_id] = order
+                self.accept_orders[self.order_ref_id] = order
+                self.order_ref_id_from[myid] = self.order_ref_id
 
         def close(self, myid, side, qty, limit=0, take_profit=None, stop_loss=None, tralling_stop=None, entryPrice=None, lastPrice=None):
             if lastPrice and entryPrice:
@@ -345,13 +346,15 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Trade
             if ref in self.active_orders:
                 self.cancel_orders[ref] = {'size':0,'myid':myid}
                 self.number_of_requests += 1
-                del self.active_orders[ref]
+
+        def get_order(self, myid):
+            ref = self.order_ref_id_from[myid]
+            return self.active_orders.get(ref,None)
 
         def cancel_order_all(self):
             for k,ref in self.order_ref_id_from.items():
                 if ref in self.active_orders:
                     self.cancel_orders[ref] = {'size':0,'myid':k}
-                    del self.active_orders[ref]
             self.number_of_requests += 1
 
         def close_position(self):
@@ -365,12 +368,12 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Trade
                 order = None
             if order is not None:
                 ref = self.order_ref_id_from[myid]
-                if ref not in self.active_orders:
+                if ref not in self.accept_orders:
                     self.number_of_requests += 1
                     self.number_of_orders += 1
                     self.order_ref_id += 1
                     self.new_orders[self.order_ref_id] = order
-                    self.active_orders[self.order_ref_id] = order
+                    self.accept_orders[self.order_ref_id] = order
                     self.order_ref_id_from[myid] = self.order_ref_id
 
     positions = deque()
@@ -387,112 +390,118 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Trade
         O, H, L, C, bid, ask, bv, sv, Tr, T, CanEntry = Open[n], High[n], Low[n], Close[n], Bid[n], Ask[n], BuyVolume[n], SellVolume[n], Trades[n], Timestamp[n], EntryTiming[n]
 
         # 注文受付
-        remaining, exec_t = [], T-Delay[n]
-        for accept_t, o in accept_orders:
-            if exec_t>accept_t:
-                open_orders.update(o)
-            else:
-                remaining.append((accept_t,o))
-
-        # 残った注文は次の足で処理
-        accept_orders = remaining
-
-        # サイズ0の注文・期限切れの注文キャンセル
-        open_orders = {k:o for k,o in open_orders.items() if o['size']>0 and T<o['expire_at']}
-
-        # 約定判定（成行と指値のみ対応/現在の足で約定）
-        executions = {k:o for k,o in open_orders.items() if (o['limit']==0) or\
-            ((o['side']<0 and H>o['limit'] and bv>0) or (o['side']>0 and L<o['limit'] and sv>0))}
-
-        # 約定処理
-        for k,e in executions.items():
-            o_side, o_price, o_size, o_id = e['side'], e['limit'], e['size'], e['myid']
-
-            # 約定価格とサイズ
-            if o_price>0:
-                if o_side>0:
-                    exec_price = o_price
-                    exec_size = min(o_size, sv)
+        if len(accept_orders):
+            remaining, exec_t = [], T-Delay[n]
+            for accept_t, o in accept_orders:
+                if exec_t>accept_t:
+                    open_orders.update(o)
                 else:
-                    exec_price = o_price
-                    exec_size = min(o_size, bv)
-            else:
-                if o_side>0:
-                    exec_price = ask
-                    exec_size = o_size
-                else:
-                    exec_price = bid
-                    exec_size = o_size
-            # print(n,'Exec',o_side,exec_price,exec_size,o_id)
+                    remaining.append((accept_t,o))
 
-            # 部分約定なら残サイズを戻す
-            if exec_size < o_size:
-                open_orders[k]['size'] = o_size-exec_size
-            else:
-                del open_orders[k]
+            # 残った注文は次の足で処理
+            accept_orders = remaining
 
-            if exec_size>0:
-                # 注文情報保存
-                if o_side > 0:
-                    LongTrade[n] = exec_price
-                else:
-                    ShortTrade[n] = exec_price
+        if len(open_orders):
 
-                # ポジション追加
-                positions.append((o_side, exec_price, exec_size))
+            # サイズ0の注文・期限切れの注文キャンセル
+            open_orders = {k:o for k,o in open_orders.items() if o['size']>0 and T<o['expire_at']}
 
-                # 決済
-                while len(positions)>=2:
-                    if positions[0][0] != positions[-1][0]:
-                        l_side, l_price, l_size = positions.popleft()
-                        r_side, r_price, r_size = positions.pop()
-                        if l_size >= r_size:
-                            pnl = (r_price - l_price) * (r_size * l_side)
-                            l_size = round(l_size-r_size,8)
-                            if l_size > 0:
-                                positions.appendleft((l_side,l_price,l_size))
-                            # print(n, 'Close', l_side, l_price, r_size, r_price, pnl)
-                        else:
-                            pnl = (r_price - l_price) * (l_size * l_side)
-                            r_size = round(r_size-l_size,8)
-                            if r_size > 0:
-                                positions.append((r_side,r_price,r_size))
-                            # print(n, 'Close', l_side, l_price, l_size, r_price, pnl)
-                        # 決済情報保存
-                        if l_side > 0:
-                            LongPL[n] = LongPL[n]+pnl
-                            LongPct[n] = LongPL[n]/r_price
-                        else:
-                            ShortPL[n] = ShortPL[n]+pnl
-                            ShortPct[n] = ShortPL[n]/r_price
+            # 約定判定（成行と指値のみ対応/現在の足で約定）
+            executions = {k:o for k,o in open_orders.items() if (o['limit']==0) or\
+                ((o['side']<0 and H>o['limit'] and bv>0) or (o['side']>0 and L<o['limit'] and sv>0))}
+
+            # 約定処理
+            for k,e in executions.items():
+                o_side, o_price, o_size, o_id = e['side'], e['limit'], e['size'], e['myid']
+
+                # 約定価格とサイズ
+                if o_price>0:
+                    if o_side>0:
+                        exec_price = o_price
+                        exec_size = min(o_size, sv)
                     else:
-                        break
+                        exec_price = o_price
+                        exec_size = min(o_size, bv)
+                else:
+                    if o_side>0:
+                        exec_price = ask
+                        exec_size = o_size
+                    else:
+                        exec_price = bid
+                        exec_size = o_size
+                # print(n,'Exec',o_side,exec_price,exec_size,o_id)
 
-        # ポジションサイズ計算
-        if len(positions):
-            position_size = math.fsum(p[2] for p in positions)
-            position_avg_price = math.fsum(p[1]*p[2] for p in positions) / position_size
-            position_size = position_size * positions[0][0]
-        else:
-            position_size = position_avg_price = 0
-        # print(n,'Pos',position_avg_price,position_size)
+                # 部分約定なら残サイズを戻す
+                if exec_size < o_size:
+                    open_orders[k]['size'] = o_size-exec_size
+                else:
+                    del open_orders[k]
+
+                if exec_size>0:
+                    # 注文情報保存
+                    if o_side > 0:
+                        LongTrade[n] = exec_price
+                    else:
+                        ShortTrade[n] = exec_price
+
+                    # ポジション追加
+                    positions.append((o_side, exec_price, exec_size))
+
+                    # 決済
+                    while len(positions)>=2:
+                        if positions[0][0] != positions[-1][0]:
+                            l_side, l_price, l_size = positions.popleft()
+                            r_side, r_price, r_size = positions.pop()
+                            if l_size >= r_size:
+                                pnl = (r_price - l_price) * (r_size * l_side)
+                                l_size = round(l_size-r_size,8)
+                                if l_size > 0:
+                                    positions.appendleft((l_side,l_price,l_size))
+                                # print(n, 'Close', l_side, l_price, r_size, r_price, pnl)
+                            else:
+                                pnl = (r_price - l_price) * (l_size * l_side)
+                                r_size = round(r_size-l_size,8)
+                                if r_size > 0:
+                                    positions.append((r_side,r_price,r_size))
+                                # print(n, 'Close', l_side, l_price, l_size, r_price, pnl)
+                            # 決済情報保存
+                            if l_side > 0:
+                                LongPL[n] = LongPL[n]+pnl
+                                LongPct[n] = LongPL[n]/r_price
+                            else:
+                                ShortPL[n] = ShortPL[n]+pnl
+                                ShortPct[n] = ShortPL[n]/r_price
+                        else:
+                            break
+
+                    # ポジションサイズ計算
+                    if len(positions):
+                        position_size = math.fsum(p[2] for p in positions)
+                        position_avg_price = math.fsum(p[1]*p[2] for p in positions) / position_size
+                        position_size = position_size * positions[0][0]
+                    else:
+                        position_size = position_avg_price = 0
+                    # print(n,'Pos',position_avg_price,position_size)
+
+                    # 合計損益
+                    netprofit = netprofit + LongPL[n] + ShortPL[n]
 
         # ポジション情報保存
         PositionSize[n] = position_size
 
-        # 合計損益
-        netprofit = netprofit + LongPL[n] + ShortPL[n]
-
         # 注文作成
-        strategy.positions, strategy.position_size, strategy.position_avg_price, strategy.netprofit, strategy.active_orders, strategy.new_orders, strategy.cancel_orders = \
-            list(positions), position_size, position_avg_price, netprofit, open_orders, {}, {}
         if CanEntry:
+            strategy.positions, strategy.position_size, strategy.position_avg_price, strategy.netprofit, \
+                strategy.active_orders, strategy.new_orders, strategy.cancel_orders, strategy.accept_orders = \
+                    list(positions), position_size, position_avg_price, netprofit,\
+                        open_orders, {}, {}, {k:v for t,o in accept_orders for k,v in o.items()}
+
             YourLogic(O, H, L, C, n, strategy)
             strategy.prev_n = n
 
-        # 注文
-        accept_orders.append((T+Delay[n]+0.1,strategy.cancel_orders))
-        accept_orders.append((T+Delay[n]+0.2,strategy.new_orders))
+            # 注文
+            accept_orders.append((T+Delay[n]+0.15,strategy.cancel_orders))
+            accept_orders.append((T+Delay[n]+0.30,strategy.new_orders))
 
         # API発行回数・新規注文数保存
         NumberOfRequests[n] = strategy.number_of_requests
