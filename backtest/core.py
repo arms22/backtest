@@ -288,7 +288,6 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Trade
             self.number_of_orders = 0
             self.order_ref_id = 1
             self.order_ref_id_from = defaultdict(int)
-            self.prev_n = 0
             self.trailing_orders = {}
 
         def order(self, myid, side, qty, limit=0, expire_at=EXPIRE_MAX):
@@ -387,7 +386,7 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Trade
     for n in range(1, N-1):
 
         # OHLCV取得
-        O, H, L, C, bid, ask, bv, sv, Tr, T, CanEntry = Open[n], High[n], Low[n], Close[n], Bid[n], Ask[n], BuyVolume[n], SellVolume[n], Trades[n], Timestamp[n], EntryTiming[n]
+        O, H, L, C, bid, ask, bv, sv, T, CanEntry = Open[n], High[n], Low[n], Close[n], Bid[n], Ask[n], BuyVolume[n], SellVolume[n], Timestamp[n], EntryTiming[n]
 
         # 注文受付
         if len(accept_orders):
@@ -497,11 +496,12 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Trade
                         open_orders, {}, {}, {k:v for t,o in accept_orders for k,v in o.items()}
 
             YourLogic(O, H, L, C, n, strategy)
-            strategy.prev_n = n
 
             # 注文
-            accept_orders.append((T+Delay[n]+0.15,strategy.cancel_orders))
+            accept_orders.append((T+Delay[n]+0.30,strategy.cancel_orders))
             accept_orders.append((T+Delay[n]+0.30,strategy.new_orders))
+            # accept_orders.append((T+0.30,strategy.cancel_orders))
+            # accept_orders.append((T+0.30,strategy.new_orders))
 
         # API発行回数・新規注文数保存
         NumberOfRequests[n] = strategy.number_of_requests
@@ -624,10 +624,12 @@ def Backtest(ohlcv,
 
         # エントリータイミング
         if interval_yourlogic:
-            EntryTiming = np.diff(Timestamp // interval_yourlogic)
+            ti = Timestamp // interval_yourlogic
+            EntryTiming = ti - np.roll(ti, 1)
         else:
             if volume_yourlogic:
-                EntryTiming = np.diff(np.cumsum(ohlcv.volume.values) // volume_yourlogic)
+                vi = np.cumsum(ohlcv.volume.values) // volume_yourlogic
+                EntryTiming = vi - np.roll(vi, 1)
             else:
                 EntryTiming = np.full(shape=(N), fill_value=1)
         # import line_profiler
@@ -677,15 +679,11 @@ class BacktestReport:
         self.DataFrame = DataFrame
 
         # API利用状況
-        N = len(DataFrame)
-        timeframe = (DataFrame.index[-1] - DataFrame.index[0]).total_seconds()/N
-        n_1min = int(max( 60 // timeframe,1))
-        n_5min = int(max(300 // timeframe,1))
         requests = DataFrame['NumberOfRequests'].diff()
         orders = DataFrame['NumberOfOrders'].diff()
-        self.DataFrame['Requests/min'] = requests.rolling(n_1min).sum()
-        self.DataFrame['Requests/5min'] = requests.rolling(n_5min).sum()
-        self.DataFrame['Orders/min'] = orders.rolling(n_1min).sum()
+        self.DataFrame['Requests/min'] = requests.rolling('1T').sum()
+        self.DataFrame['Requests/5min'] = requests.rolling('5T').sum()
+        self.DataFrame['Orders/min'] = orders.rolling('1T').sum()
 
         # ロング統計
         LongPL = DataFrame['LongPL']

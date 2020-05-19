@@ -21,94 +21,86 @@ def __sma_core__(v, n, p, r):
         wp = (wp + 1) % p
     r[n-1] = sum / p
 
-def fastsma(source, period):
+def fastsma(source, periods):
     v = source.values
     n = len(v)
-    p = int(period)
+    p = int(periods)
     r = np.empty(n)
-    __sma_core__(v,n,period,r)
+    __sma_core__(v,n,periods,r)
     return pd.Series(r, index=source.index)
 
-def sma(source, period):
-    period = int(period) if isinstance(period,float) else period
-    return source.rolling(period,min_periods=1).mean()
+def sma(source, periods):
+    return source.rolling(periods,min_periods=1).mean()
 
-def dsma(source, period):
-    period = int(period) if isinstance(period,float) else period
-    sma = source.rolling(period).mean()
-    return (sma * 2) - sma.rolling(period,min_periods=1).mean()
+def dsma(source, periods):
+    sma = source.rolling(periods).mean()
+    return (sma * 2) - sma.rolling(periods,min_periods=1).mean()
 
-def tsma(source, period):
-    period = int(period) if isinstance(period,float) else period
-    sma = source.rolling(period).mean()
-    sma2 = sma.rolling(period,min_periods=1).mean()
-    return (sma * 3) - (sma2 * 3) + sma2.rolling(period,min_periods=1).mean()
+def tsma(source, periods):
+    sma = source.rolling(periods).mean()
+    sma2 = sma.rolling(periods,min_periods=1).mean()
+    return (sma * 3) - (sma2 * 3) + sma2.rolling(periods,min_periods=1).mean()
 
-def ema(source, period):
-    # alpha = 2.0 / (period + 1)
-    return source.ewm(span=period).mean()
+def ema(source, periods):
+    # alpha = 2.0 / (periods + 1)
+    return source.ewm(span=periods).mean()
 
-def nma(source, N, period):
-    alpha = N / (max(period, N) + 1)
+def nma(source, N, periods):
+    alpha = N / (max(periods, N) + 1)
     return source.ewm(alpha=alpha).mean()
 
-def dema(source, period):
-    ema = source.ewm(span=period).mean()
-    return (ema * 2) - ema.ewm(span=period).mean()
+def dema(source, periods):
+    ema = source.ewm(span=periods).mean()
+    return (ema * 2) - ema.ewm(span=periods).mean()
 
-def tema(source, period):
-    ema = source.ewm(span=period).mean()
-    ema2 = ema.ewm(span=period).mean()
-    return (ema * 3) - (ema2 * 3) + ema2.ewm(span=period).mean()
+def tema(source, periods):
+    ema = source.ewm(span=periods).mean()
+    ema2 = ema.ewm(span=periods).mean()
+    return (ema * 3) - (ema2 * 3) + ema2.ewm(span=periods).mean()
 
-def rma(source, period):
-    alpha = 1.0 / (period)
+def rma(source, periods):
+    alpha = 1.0 / (periods)
     return source.ewm(alpha=alpha).mean()
 
-def highest(source, period):
-    period = int(period) if isinstance(period,float) else period
-    return source.rolling(period,min_periods=1).max()
+def highest(source, periods):
+    return source.rolling(periods,min_periods=1).max()
 
-def lowest(source, period):
-    period = int(period) if isinstance(period,float) else period
-    return source.rolling(period,min_periods=1).min()
+def lowest(source, periods):
+    return source.rolling(periods,min_periods=1).min()
 
-def stdev(source, period):
-    period = int(period) if isinstance(period,float) else period
-    return source.rolling(period,min_periods=1).std()
+def stdev(source, periods):
+    return source.rolling(periods,min_periods=1).std()
 
-def stdev3(ohlc, period):
-    period = int(period) if isinstance(period,float) else period
-    avg = ((ohlc.high+ohlc.low+ohlc.close)/3).rolling(period,min_periods=1).mean()
-    avg_sq = ((ohlc.high**2+ohlc.low**2+ohlc.close**2)/3).rolling(period,min_periods=1).mean()
+def stdev3(ohlc, periods):
+    avg = ((ohlc.high+ohlc.low+ohlc.close)/3).rolling(periods,min_periods=1).mean()
+    avg_sq = ((ohlc.high**2+ohlc.low**2+ohlc.close**2)/3).rolling(periods,min_periods=1).mean()
     var = avg_sq - avg**2
     return np.sqrt(var)
 
-def variance(source, period):
-    period = int(period) if isinstance(period,float) else period
-    return source.rolling(period,min_periods=1).var()
+def variance(source, periods):
+    return source.rolling(periods,min_periods=1).var()
 
-def rsi(source, period):
+def rsi(source, periods):
     diff = source.diff()
-    alpha = 1.0 / (period)
+    alpha = 1.0 / (periods)
     positive = diff.clip_lower(0).ewm(alpha=alpha).mean()
     negative = diff.clip_upper(0).ewm(alpha=alpha).mean()
     rsi = 100-100/(1-positive/negative)
     return rsi
 
-def stoch(close, high, low, period):
-    period = int(period)
-    hline = high.rolling(period).max()
-    lline = low.rolling(period).min()
+def stoch(close, high, low, periods):
+    periods = int(periods)
+    hline = high.rolling(periods).max()
+    lline = low.rolling(periods).min()
     return 100 * (close - lline) / (hline - lline)
 
-def momentum(source, period):
-    return source - source.shift(int(period))
+def momentum(source, periods):
+    return source - source.shift(int(periods))
 
-def bband(source, period, mult=2.0):
-    period = int(period)
-    middle = source.rolling(period).mean()
-    sigma = source.rolling(period).std()
+def bband(source, periods, mult=2.0):
+    periods = int(periods)
+    middle = source.rolling(periods).mean()
+    sigma = source.rolling(periods).std()
     upper = middle+sigma*mult
     lower = middle-sigma*mult
     return (upper, lower, middle, sigma)
@@ -121,13 +113,12 @@ def macd(source, fastlen, slowlen, siglen, use_sma=False):
     signal = macd.rolling(int(siglen)).mean()
     return (macd, signal, macd-signal)
 
-def hlband(source, period):
-    period = int(period) if isinstance(period,float) else period
-    high = source.rolling(period).max()
-    low = source.rolling(period).min()
+def hlband(source, periods):
+    high = source.rolling(periods).max()
+    low = source.rolling(periods).min()
     return (high, low)
 
-def wvf(close, low, period = 22, bbl = 20, mult = 2.0, lb = 50, ph = 0.85, pl=1.01):
+def wvf(close, low, periods = 22, bbl = 20, mult = 2.0, lb = 50, ph = 0.85, pl=1.01):
     """
     period: LookBack Period Standard Deviation High
     bbl:    Bolinger Band Length
@@ -138,9 +129,9 @@ def wvf(close, low, period = 22, bbl = 20, mult = 2.0, lb = 50, ph = 0.85, pl=1.
     """
     bbl = int(bbl)
     lb = int(lb)
-    period = int(period)
+    periods = int(periods)
     # VixFix
-    close_max = close.rolling(period).max()
+    close_max = close.rolling(periods).max()
     wvf = ((close_max - low) / close_max) * 100
 
     sDev = mult * wvf.rolling(bbl).std()
@@ -151,9 +142,9 @@ def wvf(close, low, period = 22, bbl = 20, mult = 2.0, lb = 50, ph = 0.85, pl=1.
     rangeLow = wvf.rolling(lb).min() * pl
     return (wvf, lowerBand, upperBand, rangeHigh, rangeLow)
 
-def wvf_inv(close, high, period = 22, bbl = 20, mult = 2.0, lb = 50, ph = 0.85, pl=1.01):
+def wvf_inv(close, high, periods = 22, bbl = 20, mult = 2.0, lb = 50, ph = 0.85, pl=1.01):
     """
-    period: LookBack Period Standard Deviation High
+    periods: LookBack Period Standard Deviation High
     bbl:    Bolinger Band Length
     mult:   Bollinger Band Standard Devaition Up
     lb:     Look Back Period Percentile High
@@ -162,9 +153,9 @@ def wvf_inv(close, high, period = 22, bbl = 20, mult = 2.0, lb = 50, ph = 0.85, 
     """
     bbl = int(bbl)
     lb = int(lb)
-    period = int(period)
+    periods = int(periods)
     # VixFix_inverse
-    close_min = close.rolling(period).min()
+    close_min = close.rolling(periods).min()
     wvf_inv = abs(((close_min - high) / close_min) * 100)
 
     sDev = mult * wvf_inv.rolling(bbl).std()
@@ -184,14 +175,14 @@ def tr(close, high, low):
     tr[diff_lc > tr] = diff_lc
     return tr
 
-def atr(close, high, low, period):
+def atr(close, high, low, periods):
     last = close.shift(1).fillna(method='ffill')
     tr = high - low
     diff_hc = (high - last).abs()
     diff_lc = (low - last).abs()
     tr[diff_hc > tr] = diff_hc
     tr[diff_lc > tr] = diff_lc
-    return tr.ewm(alpha=1.0/period).mean()
+    return tr.ewm(alpha=1.0/periods).mean()
 
 def crossover(a, b):
     cond1 = (a > b)
@@ -201,13 +192,13 @@ def crossunder(a, b):
     cond1 = (a < b)
     return cond1 & (~cond1).shift(1)
 
-def last(source, period=0):
+def last(source, periods=0):
     """
     last(close)     現在の足
     last(close, 0)  現在の足
     last(close, 1)  1つ前の足
     """
-    return source.iat[-1-int(period)]
+    return source.iat[-1-int(periods)]
 
 def totuple(source):
     return tuple(source.values.flatten())
@@ -215,23 +206,21 @@ def totuple(source):
 def tolist(source):
     return list(source.values.flatten())
 
-def change(source, period=1, freq=None):
-    if freq:
-        return source-source.shift(freq=freq).fillna(0)
-    period = int(period) if isinstance(period,float) else period
-    return source.diff(period).fillna(0)
+def change(source, periods=None, freq=None):
+    periods = 1 if periods is None and freq is None else periods
+    return (source-source.shift(periods=periods, freq=freq)).fillna(0)
 
-def falling(source, period=1):
-    return source.diff(period).fillna(0)<0
+def falling(source, periods=1):
+    return source.diff(periods).fillna(0)<0
 
-def rising(source, period=1):
-    return source.diff(period).fillna(0)>0
+def rising(source, periods=1):
+    return source.diff(periods).fillna(0)>0
 
-def fallingcnt(source, period=1):
-    return (source.diff()<0).rolling(period, min_periods=1).sum()
+def fallingcnt(source, periods=1):
+    return (source.diff()<0).rolling(periods, min_periods=1).sum()
 
-def risingcnt(source, period=1):
-    return (source.diff()>0).rolling(period, min_periods=1).sum()
+def risingcnt(source, periods=1):
+    return (source.diff()>0).rolling(periods, min_periods=1).sum()
 
 def pivothigh(source, leftbars, rightbars):
     leftbars = int(leftbars)
@@ -317,21 +306,21 @@ def sar(high, low, start, inc, max):
                 sar[i] = ep
     return pd.Series(sar, index=index)
 
-def minimum(a, b, period=1):
+def minimum(a, b, periods=1):
     c = a.copy()
     c[a > b] = b
-    if period < 2:
+    if periods < 2:
         return c
-    period = int(period)
-    return c.rolling(period).min()
+    periods = int(periods)
+    return c.rolling(periods).min()
 
-def maximum(a, b, period=1):
+def maximum(a, b, periods=1):
     c = a.copy()
     c[a < b] = b
-    if period < 2:
+    if periods < 2:
         return c
-    period = int(period)
-    return c.rolling(period).max()
+    periods = int(periods)
+    return c.rolling(periods).max()
 
 @lru_cache(maxsize=None)
 def fib(n):
@@ -368,15 +357,15 @@ def __rci_core__(v, n, p, r):
     for i in range(p-1, n):
         r[i] = ((1.0 - (6.0 * __rci_d__(v, i, p)) / k)) * 100.0
 
-def fastrci(source, period):
+def fastrci(source, periods):
     v = source.values
     n = len(v)
-    p = int(period)
+    p = int(periods)
     r = np.empty(n)
     __rci_core__(v,n,p,r)
     return pd.Series(r, index=source.index)
 
-def rci(source, period):
+def rci(source, periods):
     """
     ord(seq, idx, itv) =>
         p = seq[idx]
@@ -393,52 +382,50 @@ def rci(source, period):
 
     rci(itv) => (1.0 - 6.0 * d(itv) / (itv * (itv * itv - 1.0))) * 100.0
     """
-    period = int(period)
+    periods = int(periods)
     v = source.values
     n = len(v)
     r = np.empty(n)
-    for i in range(period-1):
+    for i in range(periods-1):
         r[i] = np.nan
 
-    # rank_idx = np.array(range(1, period+1))
+    # rank_idx = np.array(range(1, periods+1))
     # def d(isrc):
-    #     rank_ord = np.argsort(v[isrc-period+1:isrc+1])
+    #     rank_ord = np.argsort(v[isrc-periods+1:isrc+1])
     #     return np.sum((rank_idx - rank_ord) ** 2)
 
     def d(isrc):
         r = 0
-        ord = np.argsort(v[isrc-period+1:isrc+1])
-        for i in range(period):
+        ord = np.argsort(v[isrc-periods+1:isrc+1])
+        for i in range(periods):
             r = r + (i + 1 - ord[i]) ** 2
         return r
 
-    k = (period * (period ** 2 - 1))
-    for i in range(period-1, n):
+    k = (periods * (periods ** 2 - 1))
+    for i in range(periods-1, n):
         r[i] = ((1.0 - (6.0 * d(i)) / k)) * 100.0
 
     return pd.Series(r, index=source.index)
 
-def polyfline(source, period, deg=2):
-    period = int(period)
+def polyfline(source, periods, deg=2):
+    periods = int(periods)
     deg = int(deg)
     v = source.values
     n = len(v)
-    x = np.linspace(0, period-1, period)
+    x = np.linspace(0, periods-1, periods)
     poly = np.empty(n)
-    for i in range(0, period):
+    for i in range(0, periods):
         poly[i] = np.nan
-    for i in range(period, n):
-        p = np.poly1d(np.polyfit(x, v[i-period:i], deg))
-        poly[i] = p(period-1)
+    for i in range(periods, n):
+        p = np.poly1d(np.polyfit(x, v[i-periods:i], deg))
+        poly[i] = p(periods-1)
     return pd.Series(poly, index=source.index)
 
-def correlation(source_a, source_b, period):
-    period = int(period) if isinstance(period,float) else period
-    return source_a.rolling(period).corr(source_b)
+def correlation(source_a, source_b, periods):
+    return source_a.rolling(periods).corr(source_b)
 
-def cumsum(source, period):
-    period = int(period) if isinstance(period,float) else period
-    return source.rolling(period,min_periods=1).sum()
+def cumsum(source, periods):
+    return source.rolling(periods,min_periods=1).sum()
 
 def hlc3(ohlcv):
     return (ohlcv.high+ohlcv.low+ohlcv.close)/3
@@ -446,19 +433,18 @@ def hlc3(ohlcv):
 def ohlc4(ohlcv):
     return (ohlcv.open+ohlcv.high+ohlcv.low+ohlcv.close)/4
 
-def mfi(ohlcv, period):
+def mfi(ohlcv, periods):
     tp = (ohlcv.high+ohlcv.low+ohlcv.close)/3
     mf = tp * ohlcv.volume
     df = mf.diff()
-    pmf = df.clip_lower(0).rolling(period).sum()
-    mmf = df.clip_upper(0).rolling(period).sum().abs()
+    pmf = df.clip_lower(0).rolling(periods).sum()
+    mmf = df.clip_upper(0).rolling(periods).sum().abs()
     mr = pmf/mmf
     return 100-(100/(1+mr))
 
-def zscore(source, period):
-    period = int(period) if isinstance(period,float) else period
-    std = source.rolling(period,min_periods=1).std()
-    avg = source.rolling(period,min_periods=1).mean()
+def zscore(source, periods):
+    std = source.rolling(periods,min_periods=1).std()
+    avg = source.rolling(periods,min_periods=1).mean()
     return (source-avg)/std
 
 if __name__ == '__main__':

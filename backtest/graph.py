@@ -8,7 +8,7 @@ def ohlcv_scatter(ohlcv):
     high_sca = go.Scatter(
         x = ohlcv.high.index,
         y = ohlcv.high,
-        name = 'Hihg', mode = 'lines', line_shape='hv')
+        name = 'High', mode = 'lines', line_shape='hv')
     low_sca = go.Scatter(
         x = ohlcv.low.index,
         y = ohlcv.low,
@@ -101,9 +101,9 @@ def ReportFigure(r, title_text='', height=600, ohlcv=None, pf_conf=(100,5,-5)):
     fig.add_trace(sell_executions_scatter(r),row=1,col=1)
 
     netprofit, netprofit_cummax, drawdown = netprofit_scatter(r)
-    # fig.add_trace(netprofit,row=2,col=1)
-    # fig.add_trace(netprofit_cummax,row=2,col=1)
-    # fig.add_trace(drawdown,row=2,col=1,secondary_y=True)
+    # fig.add_trace(netprofit,row=3,col=1)
+    # fig.add_trace(netprofit_cummax,row=3,col=1)
+    # fig.add_trace(drawdown,row=3,col=1,secondary_y=True)
     fig.add_trace(netprofit,row=1,col=1,secondary_y=True)
     fig.add_trace(netprofit_cummax,row=1,col=1,secondary_y=True)
     fig.add_trace(drawdown,row=1,col=1,secondary_y=True)
