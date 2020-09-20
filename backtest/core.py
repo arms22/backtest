@@ -6,6 +6,7 @@ from numba import jit, b1, f8, i8, void
 from .utils import dotdict
 from hyperopt import hp, tpe, Trials, fmin, rand, anneal, STATUS_OK
 from collections import deque, defaultdict
+from operator import itemgetter
 
 # PythonでFXシストレのバックテスト(1)
 # https://qiita.com/toyolab/items/e8292d2f051a88517cb2 より
@@ -289,6 +290,7 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Trade
             self.order_ref_id = 1
             self.order_ref_id_from = defaultdict(int)
             self.trailing_orders = {}
+            self.settlements = []
 
         def order(self, myid, side, qty, limit=0, expire_at=EXPIRE_MAX):
             ref = self.order_ref_id_from[myid]
@@ -299,7 +301,7 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Trade
                 self.number_of_requests += 1
                 self.number_of_orders += 1
                 self.order_ref_id += 1
-                order = {'side':1 if side=='buy' else -1, 'limit':limit, 'size':qty, 'myid':myid, 'expire_at':expire_at}
+                order = {'side':1 if side=='buy' else -1, 'price':limit, 'size':qty, 'myid':myid, 'expire_at':expire_at}
                 self.new_orders[self.order_ref_id] = order
                 self.accept_orders[self.order_ref_id] = order
                 self.order_ref_id_from[myid] = self.order_ref_id
@@ -348,7 +350,13 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Trade
 
         def get_order(self, myid):
             ref = self.order_ref_id_from[myid]
-            return self.active_orders.get(ref,None)
+            return self.active_orders.get(ref,None) or self.accept_orders.get(ref,None)
+
+        def get_orders(self):
+            orders = list(self.active_orders.values())+list(o for o in self.accept_orders.values() if o['size']>0)
+            buy_orders = sorted([o for o in orders if o['side']==1],key=itemgetter('price'))
+            sell_orders = sorted([o for o in orders if o['side']==-1],key=itemgetter('price'))
+            return buy_orders, sell_orders
 
         def cancel_order_all(self):
             for k,ref in self.order_ref_id_from.items():
@@ -359,10 +367,10 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Trade
         def close_position(self):
             if self.position_size>0:
                 myid = '__Lc__'
-                order = {'side':-1, 'limit':0, 'size':self.position_size, 'myid':myid, 'expire_at':EXPIRE_MAX}
+                order = {'side':-1, 'price':0, 'size':self.position_size, 'myid':myid, 'expire_at':EXPIRE_MAX}
             elif self.position_size<0:
                 myid = '__Sc__'
-                order = {'side':1, 'limit':0, 'size':-self.position_size, 'myid':myid, 'expire_at':EXPIRE_MAX}
+                order = {'side':1, 'price':0, 'size':-self.position_size, 'myid':myid, 'expire_at':EXPIRE_MAX}
             else:
                 order = None
             if order is not None:
@@ -406,12 +414,12 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Trade
             open_orders = {k:o for k,o in open_orders.items() if o['size']>0 and T<o['expire_at']}
 
             # 約定判定（成行と指値のみ対応/現在の足で約定）
-            executions = {k:o for k,o in open_orders.items() if (o['limit']==0) or\
-                ((o['side']<0 and H>o['limit'] and bv>0) or (o['side']>0 and L<o['limit'] and sv>0))}
+            executions = {k:o for k,o in open_orders.items() if (o['price']==0) or\
+                ((o['side']<0 and H>o['price'] and bv>0) or (o['side']>0 and L<o['price'] and sv>0))}
 
             # 約定処理
             for k,e in executions.items():
-                o_side, o_price, o_size, o_id = e['side'], e['limit'], e['size'], e['myid']
+                o_side, o_price, o_size, o_id = e['side'], e['price'], e['size'], e['myid']
 
                 # 約定価格とサイズ
                 if o_price>0:
@@ -453,15 +461,17 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Trade
                             r_side, r_price, r_size = positions.pop()
                             if l_size >= r_size:
                                 pnl = (r_price - l_price) * (r_size * l_side)
-                                l_size = round(l_size-r_size,8)
-                                if l_size > 0:
-                                    positions.appendleft((l_side,l_price,l_size))
+                                size = r_size
+                                order_remaing = round(l_size-r_size,8)
+                                if order_remaing > 0:
+                                    positions.appendleft((l_side,l_price,order_remaing))
                                 # print(n, 'Close', l_side, l_price, r_size, r_price, pnl)
                             else:
                                 pnl = (r_price - l_price) * (l_size * l_side)
-                                r_size = round(r_size-l_size,8)
-                                if r_size > 0:
-                                    positions.append((r_side,r_price,r_size))
+                                size = l_size
+                                order_remaing = round(r_size-l_size,8)
+                                if order_remaing > 0:
+                                    positions.append((r_side,r_price,order_remaing))
                                 # print(n, 'Close', l_side, l_price, l_size, r_price, pnl)
                             # 決済情報保存
                             if l_side > 0:
@@ -470,6 +480,7 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Trade
                             else:
                                 ShortPL[n] = ShortPL[n]+pnl
                                 ShortPct[n] = ShortPL[n]/r_price
+                            strategy.settlements.append({'side':l_side, 'price':r_price, 'size':size, 'pnl':pnl})
                         else:
                             break
 
@@ -498,10 +509,8 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Trade
             YourLogic(O, H, L, C, n, strategy)
 
             # 注文
-            accept_orders.append((T+Delay[n]+0.30,strategy.cancel_orders))
-            accept_orders.append((T+Delay[n]+0.30,strategy.new_orders))
-            # accept_orders.append((T+0.30,strategy.cancel_orders))
-            # accept_orders.append((T+0.30,strategy.new_orders))
+            accept_orders.append((T+0.3,strategy.cancel_orders))
+            accept_orders.append((T+0.3,strategy.new_orders))
 
         # API発行回数・新規注文数保存
         NumberOfRequests[n] = strategy.number_of_requests
@@ -599,11 +608,11 @@ def Backtest(ohlcv,
         if 'bid' in ohlcv:
             Bid = ohlcv.bid.values
         else:
-            Bid = Close-spread/2
+            Bid = Open-spread/2
         if  'ask' in ohlcv:
             Ask = ohlcv.ask.values
         else:
-            Ask = Close+spread/2
+            Ask = Open+spread/2
         if 'buy_volume' in ohlcv:
             BuyVolume = ohlcv.buy_volume.values
         else:
