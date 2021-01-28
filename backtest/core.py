@@ -272,6 +272,7 @@ def BacktestCore(Open, High, Low, Close, Volume, Trades, N,
         ShortPL[N-1] = (sellExecPrice - ClosePrice) * sellExecLot #損益確定
         ShortPct[N-1] = ShortPL[N-1] / sellExecPrice
 
+BacktestSettlements = []
 def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Trades, Timestamp, Delay, N, YourLogic, EntryTiming,
                   LongTrade, LongPL, LongPct, ShortTrade, ShortPL, ShortPct, PositionSize, NumberOfRequests, NumberOfOrders):
     EXPIRE_MAX = np.finfo(np.float64).max
@@ -390,6 +391,7 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Trade
     open_orders = {}
     accept_orders = []
     strategy = Strategy()
+    BacktestSettlements.clear()
 
     for n in range(1, N-1):
 
@@ -416,6 +418,15 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Trade
             # 約定判定（成行と指値のみ対応/現在の足で約定）
             executions = {k:o for k,o in open_orders.items() if (o['price']==0) or\
                 ((o['side']<0 and H>o['price'] and bv>0) or (o['side']>0 and L<o['price'] and sv>0))}
+            # if C>O:
+            #     executions = {k:o for k,o in open_orders.items() if (o['price']==0) or\
+            #         ((o['side']<0 and H>o['price'] and bv>0) or (o['side']>0 and (O+L)/2<o['price'] and sv>0))}
+            # elif C<O:
+            #     executions = {k:o for k,o in open_orders.items() if (o['price']==0) or\
+            #         ((o['side']<0 and (H+O)/2>o['price'] and bv>0) or (o['side']>0 and L<o['price'] and sv>0))}
+            # else:
+            #     executions = {k:o for k,o in open_orders.items() if (o['price']==0) or\
+            #         ((o['side']<0 and H>o['price'] and bv>0) or (o['side']>0 and L<o['price'] and sv>0))}
 
             # 約定処理
             for k,e in executions.items():
@@ -452,26 +463,26 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Trade
                         ShortTrade[n] = exec_price
 
                     # ポジション追加
-                    positions.append((o_side, exec_price, exec_size))
+                    positions.append((o_side, exec_price, exec_size, T))
 
                     # 決済
                     while len(positions)>=2:
                         if positions[0][0] != positions[-1][0]:
-                            l_side, l_price, l_size = positions.popleft()
-                            r_side, r_price, r_size = positions.pop()
+                            l_side, l_price, l_size, l_T = positions.popleft()
+                            r_side, r_price, r_size, r_T = positions.pop()
                             if l_size >= r_size:
                                 pnl = (r_price - l_price) * (r_size * l_side)
                                 size = r_size
                                 order_remaing = round(l_size-r_size,8)
                                 if order_remaing > 0:
-                                    positions.appendleft((l_side,l_price,order_remaing))
+                                    positions.appendleft((l_side,l_price,order_remaing,l_T))
                                 # print(n, 'Close', l_side, l_price, r_size, r_price, pnl)
                             else:
                                 pnl = (r_price - l_price) * (l_size * l_side)
                                 size = l_size
                                 order_remaing = round(r_size-l_size,8)
                                 if order_remaing > 0:
-                                    positions.append((r_side,r_price,order_remaing))
+                                    positions.append((r_side,r_price,order_remaing,r_T))
                                 # print(n, 'Close', l_side, l_price, l_size, r_price, pnl)
                             # 決済情報保存
                             if l_side > 0:
@@ -480,7 +491,7 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Trade
                             else:
                                 ShortPL[n] = ShortPL[n]+pnl
                                 ShortPct[n] = ShortPL[n]/r_price
-                            strategy.settlements.append({'side':l_side, 'price':r_price, 'size':size, 'pnl':pnl})
+                            strategy.settlements.append({'side':l_side, 'price':r_price, 'size':size, 'pnl':pnl, 'entry_time':l_T, 'exit_time':T})
                         else:
                             break
 
@@ -509,8 +520,10 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Trade
             YourLogic(O, H, L, C, n, strategy)
 
             # 注文
-            accept_orders.append((T+0.3,strategy.cancel_orders))
-            accept_orders.append((T+0.3,strategy.new_orders))
+            # accept_orders.append((T+0.08,strategy.cancel_orders))
+            # accept_orders.append((T+0.06,strategy.new_orders))
+            accept_orders.append((T+Delay[n]+0.08,strategy.cancel_orders))
+            accept_orders.append((T+Delay[n]+0.06,strategy.new_orders))
 
         # API発行回数・新規注文数保存
         NumberOfRequests[n] = strategy.number_of_requests
@@ -533,7 +546,7 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Trade
             LongTrade[N-1] = price
             ShortPL[N-1] = pnl
             ShortPct[N-1] = ShortPL[N-1]/price
-
+    BacktestSettlements.extend(strategy.settlements)
 
 def Backtest(ohlcv,
     buy_entry=None, sell_entry=None, buy_exit=None, sell_exit=None,
@@ -542,7 +555,7 @@ def Backtest(ohlcv,
     buy_size=1.0, sell_size=1.0, max_buy_size=1.0, max_sell_size=1.0,
     spread=0, take_profit=0, stop_loss=0, trailing_stop=0, slippage=0, percent_of_equity=0.0, initial_capital=0.0,
     trades_per_second = 0, delay_n = 0, order_restrict_n = 0, max_drawdown=0, wait_seconds_for_mdd=0, yourlogic=None,
-    bitflyer_rounding = False, interval_yourlogic = None, volume_yourlogic = None,
+    bitflyer_rounding = False, interval_yourlogic = None, volume_yourlogic = None, outliers_sigma = 0,
     **kwargs):
     Open = ohlcv.open.values #始値
     Low = ohlcv.low.values #安値
@@ -673,6 +686,12 @@ def Backtest(ohlcv,
     if bitflyer_rounding:
         LongPL = LongPL.round()
         ShortPL = ShortPL.round()
+
+    if outliers_sigma:
+        sd = np.std(LongPL[LongPL!=0])
+        LongPL[LongPL>sd*outliers_sigma] = 0
+        sd = np.std(ShortPL[ShortPL!=0])
+        ShortPL[ShortPL>sd*outliers_sigma] = 0
 
     return BacktestReport(pd.DataFrame({
         'LongTrade':LongTrade, 'ShortTrade':ShortTrade,
