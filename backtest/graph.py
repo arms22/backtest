@@ -59,10 +59,10 @@ def positions_scatter(r):
 def profit_factor_scatter(r, period, upper, lower):
     tradepnl = r.DataFrame.LongPL+r.DataFrame.ShortPL
     tradepnl = tradepnl[tradepnl!=0]
-    grossprofit = tradepnl.clip_lower(0)
-    grossloss = -tradepnl.clip_upper(0)
-    grossprofitsum = grossprofit.rolling(window=period,min_periods=10).sum().clip_lower(1)
-    grosslosssum = grossloss.rolling(window=period,min_periods=10).sum().clip_lower(1)
+    grossprofit = tradepnl.clip(lower=0)
+    grossloss = -tradepnl.clip(upper=0)
+    grossprofitsum = grossprofit.rolling(window=period,min_periods=10).sum().clip(lower=1)
+    grosslosssum = grossloss.rolling(window=period,min_periods=10).sum().clip(lower=1)
     profitfactor = grossprofitsum / grosslosssum
     profitfactor = profitfactor.clip(upper,lower)
     return go.Scatter(
