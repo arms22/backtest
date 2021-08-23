@@ -528,6 +528,7 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Trade
         # API発行回数・新規注文数保存
         NumberOfRequests[n] = strategy.number_of_requests
         NumberOfOrders[n] = strategy.number_of_orders
+        strategy.number_of_requests = strategy.number_of_orders = 0
 
     # 残ポジションクローズ
     if len(positions):
@@ -707,8 +708,8 @@ class BacktestReport:
         self.DataFrame = DataFrame
 
         # API利用状況
-        requests = DataFrame['NumberOfRequests'].diff()
-        orders = DataFrame['NumberOfOrders'].diff()
+        requests = DataFrame['NumberOfRequests']
+        orders = DataFrame['NumberOfOrders']
         self.DataFrame['Requests/min'] = requests.rolling('1T').sum()
         self.DataFrame['Requests/5min'] = requests.rolling('5T').sum()
         self.DataFrame['Orders/min'] = orders.rolling('1T').sum()
