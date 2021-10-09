@@ -116,7 +116,7 @@ def ReportFigure(r, title_text='', height=600, ohlcv=None, pf_conf=(100,5,-5)):
 
     return fig
 
-def IinregressLine(x, y, x_min=None, x_max=None):
+def IinregressLine(x, y, x_min=None, x_max=None, samples=None):
     x_min = x_min or x.min()
     x_max = x_max or x.max()
     # 単回帰直線
@@ -126,6 +126,11 @@ def IinregressLine(x, y, x_min=None, x_max=None):
     ay = slope * ax + intercept
     # 散布図
     fig = go.Figure()
+    if samples is not None:
+        x = x[-samples:]
+        y = y[-samples:]
+        ax = ax[-samples:]
+        ay = ay[-samples:]
     fig.add_trace(
         go.Scatter(
             x = x,

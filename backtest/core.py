@@ -133,7 +133,7 @@ def BacktestCore(Open, High, Low, Close, Volume, Trades, N,
                 ClosePrice = ClosePrice - slippage
                 LongTrade[n] = ClosePrice #買いポジションクローズ
                 LongPL[n] = (ClosePrice - buy_exec_price) * buy_exit_lot #損益確定
-                LongPct[n] = LongPL[n] / buy_exec_price
+                LongPct[n] = ClosePrice / buy_exec_price - 1
 
         # 売り注文処理
         if sellExecLot < max_sell_size:
@@ -211,7 +211,7 @@ def BacktestCore(Open, High, Low, Close, Volume, Trades, N,
                 ClosePrice = ClosePrice + spread + slippage
                 ShortTrade[n] = ClosePrice #売りポジションクローズ
                 ShortPL[n] = (sell_exec_price - ClosePrice) * sell_exit_lot #損益確定
-                ShortPct[n] = ShortPL[n] / sell_exec_price
+                ShortPct[n] = sell_exec_price / ClosePrice - 1
 
         # 利確 or 損切によるポジションの決済(エントリーと同じ足で決済しない)
         if buyExecPrice > 0 and not BuyNow and not OrderReject:
@@ -230,7 +230,7 @@ def BacktestCore(Open, High, Low, Close, Volume, Trades, N,
                 ClosePrice = ClosePrice - slippage
                 LongTrade[n] = ClosePrice #買いポジションクローズ
                 LongPL[n] = (ClosePrice - buyExecPrice) * buyExecLot #損益確定
-                LongPct[n] = LongPL[n] / buyExecPrice
+                LongPct[n] = ClosePrice / buyExecPrice - 1
                 buyExecPrice = buyExecLot = 0
 
         if sellExecPrice > 0 and not SellNow and not OrderReject:
@@ -249,7 +249,7 @@ def BacktestCore(Open, High, Low, Close, Volume, Trades, N,
                 ClosePrice = ClosePrice + slippage
                 ShortTrade[n] = ClosePrice #売りポジションクローズ
                 ShortPL[n] = (sellExecPrice - ClosePrice) * sellExecLot #損益確定
-                ShortPct[n] = ShortPL[n] / sellExecPrice
+                ShortPct[n] = sellExecPrice / ClosePrice - 1
                 sellExecPrice = sellExecLot = 0
 
         capital = capital + ShortPL[n] + LongPL[n]
@@ -265,12 +265,12 @@ def BacktestCore(Open, High, Low, Close, Volume, Trades, N,
         ClosePrice = Close[N-1]
         LongTrade[N-1] = ClosePrice #買いポジションクローズ
         LongPL[N-1] = (ClosePrice - buyExecPrice) * buyExecLot #損益確定
-        LongPct[N-1] = LongPL[N-1] / buyExecPrice
+        LongPct[N-1] = ClosePrice / buyExecPrice - 1
     if sellExecPrice > 0:
         ClosePrice = Close[N-1]
         ShortTrade[N-1] = ClosePrice #売りポジションクローズ
         ShortPL[N-1] = (sellExecPrice - ClosePrice) * sellExecLot #損益確定
-        ShortPct[N-1] = ShortPL[N-1] / sellExecPrice
+        ShortPct[N-1] = sellExecPrice / ClosePrice - 1
 
 BacktestSettlements = []
 def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Trades, Timestamp, Delay, N, YourLogic, EntryTiming,
@@ -292,20 +292,25 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Trade
             self.order_ref_id_from = defaultdict(int)
             self.trailing_orders = {}
             self.settlements = []
+            self.api_rate_limit_remaining = 500
 
         def order(self, myid, side, qty, limit=0, expire_at=EXPIRE_MAX):
             ref = self.order_ref_id_from[myid]
             if ref in self.active_orders:
-                self.cancel_orders[ref] = {'size':0,'myid':myid}
-                self.number_of_requests += 1
+                if self.api_rate_limit_remaining:
+                    self.api_rate_limit_remaining -= 1
+                    self.cancel_orders[ref] = {'size':0,'myid':myid}
+                    self.number_of_requests += 1
             if ref not in self.accept_orders:
-                self.number_of_requests += 1
-                self.number_of_orders += 1
-                self.order_ref_id += 1
-                order = {'side':1 if side=='buy' else -1, 'price':limit, 'size':qty, 'myid':myid, 'expire_at':expire_at}
-                self.new_orders[self.order_ref_id] = order
-                self.accept_orders[self.order_ref_id] = order
-                self.order_ref_id_from[myid] = self.order_ref_id
+                if self.api_rate_limit_remaining:
+                    self.api_rate_limit_remaining -= 1
+                    self.number_of_requests += 1
+                    self.number_of_orders += 1
+                    self.order_ref_id += 1
+                    order = {'side':1 if side=='buy' else -1, 'price':limit, 'size':qty, 'myid':myid, 'expire_at':expire_at}
+                    self.new_orders[self.order_ref_id] = order
+                    self.accept_orders[self.order_ref_id] = order
+                    self.order_ref_id_from[myid] = self.order_ref_id
 
         def close(self, myid, side, qty, limit=0, take_profit=None, stop_loss=None, tralling_stop=None, entryPrice=None, lastPrice=None):
             if lastPrice and entryPrice:
@@ -346,8 +351,10 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Trade
         def cancel(self, myid):
             ref = self.order_ref_id_from[myid]
             if ref in self.active_orders:
-                self.cancel_orders[ref] = {'size':0,'myid':myid}
-                self.number_of_requests += 1
+                if self.api_rate_limit_remaining:
+                    self.api_rate_limit_remaining -= 1
+                    self.cancel_orders[ref] = {'size':0,'myid':myid}
+                    self.number_of_requests += 1
 
         def get_order(self, myid):
             ref = self.order_ref_id_from[myid]
@@ -360,10 +367,12 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Trade
             return buy_orders, sell_orders
 
         def cancel_order_all(self):
-            for k,ref in self.order_ref_id_from.items():
-                if ref in self.active_orders:
-                    self.cancel_orders[ref] = {'size':0,'myid':k}
-            self.number_of_requests += 1
+            if self.api_rate_limit_remaining:
+                self.api_rate_limit_remaining -= 1
+                for k,ref in self.order_ref_id_from.items():
+                    if ref in self.active_orders:
+                        self.cancel_orders[ref] = {'size':0,'myid':k}
+                self.number_of_requests += 1
 
         def close_position(self):
             if self.position_size>0:
@@ -377,12 +386,14 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Trade
             if order is not None:
                 ref = self.order_ref_id_from[myid]
                 if ref not in self.accept_orders:
-                    self.number_of_requests += 1
-                    self.number_of_orders += 1
-                    self.order_ref_id += 1
-                    self.new_orders[self.order_ref_id] = order
-                    self.accept_orders[self.order_ref_id] = order
-                    self.order_ref_id_from[myid] = self.order_ref_id
+                    if self.api_rate_limit_remaining:
+                        self.api_rate_limit_remaining -= 1
+                        self.number_of_requests += 1
+                        self.number_of_orders += 1
+                        self.order_ref_id += 1
+                        self.new_orders[self.order_ref_id] = order
+                        self.accept_orders[self.order_ref_id] = order
+                        self.order_ref_id_from[myid] = self.order_ref_id
 
     positions = deque()
     position_size = 0
@@ -392,11 +403,17 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Trade
     accept_orders = []
     strategy = Strategy()
     BacktestSettlements.clear()
+    lastApiFeedTime = 0
 
     for n in range(1, N-1):
 
         # OHLCV取得
         O, H, L, C, bid, ask, bv, sv, T, CanEntry = Open[n], High[n], Low[n], Close[n], Bid[n], Ask[n], BuyVolume[n], SellVolume[n], Timestamp[n], EntryTiming[n]
+
+        # APIレートリミット
+        if (T-lastApiFeedTime)>300:
+            lastApiFeedTime = T
+            strategy.api_rate_limit_remaining = 500
 
         # 注文受付
         if len(accept_orders):
@@ -487,11 +504,11 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Trade
                             # 決済情報保存
                             if l_side > 0:
                                 LongPL[n] = LongPL[n]+pnl
-                                LongPct[n] = LongPL[n]/r_price
+                                LongPct[n] = r_price / l_price - 1
                             else:
                                 ShortPL[n] = ShortPL[n]+pnl
-                                ShortPct[n] = ShortPL[n]/r_price
-                            strategy.settlements.append({'side':l_side, 'price':r_price, 'size':size, 'pnl':pnl, 'entry_time':l_T, 'exit_time':T})
+                                ShortPct[n] = 1 - r_price / l_price
+                            strategy.settlements.append({'side':l_side, 'entry_time':l_T, 'entry_price':l_price, 'exit_time':T, 'exit_price':r_price, 'size':size, 'pnl':pnl})
                         else:
                             break
 
@@ -637,7 +654,7 @@ def Backtest(ohlcv,
             SellVolume = Volume/2
 
         # 基準時刻
-        Timestamp = ohlcv.index.astype(np.int64) / 10**9
+        Timestamp = ohlcv.index.view(np.int64) / 10**9
 
         # 遅延情報
         if 'delay' in ohlcv:
@@ -724,7 +741,7 @@ class BacktestReport:
             self.Long.GrossProfit = LongPL.clip(lower=0).sum()
             self.Long.GrossLoss =  LongPL.clip(upper=0).sum()
             self.Long.Profit = self.Long.GrossProfit + self.Long.GrossLoss
-            self.Long.AvgReturn = self.Long.Pct[self.Long.Pct!=0].mean()
+            self.Long.AvgReturn = self.Long.Profit/self.Long.Trades
         else:
             self.Long.GrossProfit = 0.0
             self.Long.GrossLoss = 0.0
@@ -762,7 +779,7 @@ class BacktestReport:
             self.Short.GrossProfit = ShortPL.clip(lower=0).sum()
             self.Short.GrossLoss = ShortPL.clip(upper=0).sum()
             self.Short.Profit = self.Short.GrossProfit + self.Short.GrossLoss
-            self.Short.AvgReturn = self.Short.Pct[self.Short.Pct!=0].mean()
+            self.Short.AvgReturn = self.Short.Profit / self.Short.Trades
         else:
             self.Short.GrossProfit = 0.0
             self.Short.GrossLoss = 0.0
@@ -809,7 +826,7 @@ class BacktestReport:
         self.All.LossPct = (self.Long.LossPct + self.Short.LossPct) / 2
         self.All.LossAverage = self.All.GrossLoss / self.All.LossTrades if self.All.LossTrades > 0 else 0
         self.All.Profit = self.All.GrossProfit + self.All.GrossLoss
-        self.All.AvgReturn = (self.Long.AvgReturn + self.Short.AvgReturn) / 2
+        self.All.AvgReturn = self.All.Profit / self.All.Trades if self.All.Trades > 0 else 0
         self.All.DrawDown = (self.Equity.cummax() - self.Equity).max()
         self.All.ProfitFactor = self.All.GrossProfit / -self.All.GrossLoss if -self.All.GrossLoss > 0 else 0
         if self.All.Trades > 1:
