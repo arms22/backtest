@@ -360,6 +360,11 @@ def BacktestCore2(Open, High, Low, Close, Bid, Ask, BuyVolume, SellVolume, Trade
             ref = self.order_ref_id_from[myid]
             return self.active_orders.get(ref,None) or self.accept_orders.get(ref,None)
 
+        def get_order_price(self, myid, alt_price=0, alt_size=0):
+            ref = self.order_ref_id_from[myid]
+            o = self.active_orders.get(ref,{}) or self.accept_orders.get(ref,{})
+            return o.get('price',alt_price),o.get('size',alt_size)
+
         def get_orders(self):
             orders = list(self.active_orders.values())+list(o for o in self.accept_orders.values() if o['size']>0)
             buy_orders = sorted([o for o in orders if o['side']==1],key=itemgetter('price'))
